@@ -1,0 +1,5 @@
+python-dotenv
+pydantic-settings
+aiogram>=3.0.0b7
+spotipy~=2.23.0
+APScheduler~=3.10.4
