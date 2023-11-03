@@ -1,7 +1,5 @@
 import random
 from string import ascii_letters
-import requests
-from config_reader import config
 
 
 def generate_token(length) -> str:

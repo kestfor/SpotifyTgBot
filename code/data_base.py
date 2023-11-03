@@ -103,7 +103,7 @@ class DataBase:
         if uri not in self._poll_results:
             self._poll_results[uri] = 1
             run_date = datetime.datetime.now() + datetime.timedelta(minutes=self.__MINUTES_FOR_POLL)
-            scheduler.add_job(self.del_song_from_poll, run_date=run_date, args=[uri])
+            scheduler.add_job(self.del_song_from_poll, run_date=run_date, uri=uri)
 
     def del_song_from_poll(self, uri: str):
         if uri in self._poll_results:
@@ -116,6 +116,7 @@ class DataBase:
                 #TODO добавление в очередь
                 spotify.add_track_to_queue(spotify.get_full_uri(uri))
                 self.del_song_from_poll(uri)
+                scheduler.remove_job(uri)
         else:
             raise KeyError("uri")
 
