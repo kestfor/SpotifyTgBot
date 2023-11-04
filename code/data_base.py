@@ -113,7 +113,6 @@ class DataBase:
         if uri in self._poll_results:
             self._poll_results[uri] += 1
             if self._poll_results[uri] >= self.__AMOUNT_TO_ADD_TO_QUEUE:
-                #TODO добавление в очередь
                 spotify.add_track_to_queue(spotify.get_full_uri(uri))
                 self.del_song_from_poll(uri)
                 scheduler.remove_job(uri)

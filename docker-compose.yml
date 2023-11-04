@@ -1,0 +1,13 @@
+version: '3.7'
+
+services:
+  bot:
+    build: .
+    command: >
+      sh -c "ls
+             cd ./code
+             python bot.py"
+
+
+volumes:
+  pgdata:

@@ -11,7 +11,7 @@ from spotify_api import spotify
 from data_base import db
 from filters import EmptyDataBaseFilter
 from states import SetTokenState
-
+from utils import update_admins
 
 router = Router()
 
@@ -23,6 +23,17 @@ class AddSongCallbackFactory(CallbackData, prefix="fabAddSong"):
 class ChangeSongsVote(CallbackData, prefix="fabAddVote"):
     uri: str
     action: str
+
+
+async def get_menu_text():
+    if await spotify.get_curr_track() is None:
+        text = f'🔥 людей в сессии: {len(db.users)}'
+    else:
+        artists = await spotify.get_curr_track_artists()
+        text = (f'🎧: {await spotify.get_curr_track_name()}\n\n'
+                f"{'😎' * len(artists)}️: {', '.join(artists)}\n\n"
+                f'🔥 людей в сессии: {len(db.users)}')
+    return text
 
 
 def get_admin_menu_keyboard():
@@ -73,16 +84,9 @@ async def user_start(message: Message):
     db.update_last_message(message.from_user.id, msg)
 
 
-@router.callback_query(F.data == "menu")
 async def menu(callback: CallbackQuery):
     user_id = callback.from_user.id
-    if spotify.get_curr_track() is None:
-        text = f'🔥 людей в сессии: {len(db.users)}'
-    else:
-        artists = spotify.get_curr_track_artists()
-        text = (f'🎧: {spotify.get_curr_track_name()}\n\n'
-                f"{'😎' * len(artists)}️: {', '.join(artists)}\n\n"
-                f'🔥 людей в сессии: {len(db.users)}')
+    text = await get_menu_text()
     if user_id in db.admins:
         keyboard = get_admin_menu_keyboard()
         msg = await callback.message.edit_text(text=text, reply_markup=keyboard)
@@ -92,11 +96,17 @@ async def menu(callback: CallbackQuery):
     db.update_last_message(user_id, msg)
 
 
+@router.callback_query(F.data == "menu")
+async def menu_callback(callback: CallbackQuery):
+    await menu(callback)
+
+
 @router.callback_query(F.data != "start_session", EmptyDataBaseFilter())
 async def handle_not_active_session(callback: CallbackQuery):
     user_id = callback.from_user.id
     if user_id in db.admins:
-        msg = await callback.message.edit_text("сессия завершена, для запуска сессии используйте команду '/start'", reply_markup=None)
+        msg = await callback.message.edit_text("сессия завершена, для запуска сессии используйте команду '/start'",
+                                               reply_markup=None)
     else:
         msg = await callback.message.edit_text("сессия завершена, обратитесь к админам для ее запуска")
     db.update_last_message(user_id, msg)
@@ -129,6 +139,9 @@ async def set_share_mode(callback: CallbackQuery):
 async def start_by_command(message: Message):
     await asyncio.sleep(0.2)
     user_id = message.from_user.id
+    user_name = message.from_user.username
+    #TODO убрать на релизе
+    update_admins(user_id, user_name)
     await db.del_last_message(user_id)
     await asyncio.sleep(0.3)
     if user_id in db.admins:
@@ -142,7 +155,7 @@ async def start_by_command(message: Message):
 async def start_session(callback: CallbackQuery):
     db.set_token()
     msg = await callback.message.edit_text(text=f"сессия запущена 🔥\n"
-                                          f"token: {db.token}", reply_markup=get_menu_keyboard())
+                                                f"token: {db.token}", reply_markup=get_menu_keyboard())
     db.update_last_message(callback.from_user.id, msg)
 
 
@@ -196,7 +209,7 @@ async def search_track_handler(message: Message):
             request = {}
             for item in list_of_results:
                 song_info = ' - '.join(item[0:2])
-                raw_uri = spotify.get_raw_iru(song_info[-1])
+                raw_uri = spotify.get_raw_iru(item[-1])
                 request[raw_uri] = song_info
                 keyboard.button(text=song_info, callback_data=AddSongCallbackFactory(uri=raw_uri))
             db.update_last_request(user_id, request)
@@ -214,7 +227,7 @@ async def search_track_handler(message: Message):
         await db.del_last_message(message.from_user.id)
         await asyncio.sleep(0.3)
         msg = await message.answer("сессия завершена, для запуска сессии используйте команду '/start'",
-                                               reply_markup=None)
+                                   reply_markup=None)
         await message.delete()
         db.update_last_message(message.from_user.id, msg)
 
@@ -223,10 +236,10 @@ async def search_track_handler(message: Message):
 async def make_poll(callback: CallbackQuery, callback_data: AddSongCallbackFactory, bot: Bot):
     raw_uri = callback_data.uri
     user_id = callback.from_user.id
-    if db.mode == db.SHARE_MODE:
+    if user_id in db.admins or db.mode == db.SHARE_MODE:
+        spotify.add_track_to_queue(spotify.get_full_uri(raw_uri))
         msg = await callback.message.edit_text("трек добавлен в очередь 👌", reply_markup=get_menu_keyboard())
         db.update_last_message(user_id, msg)
-        # TODO добавление в очередь
     elif db.mode == db.POLL_MODE:
         db.add_song_to_poll(raw_uri)
         msg = await callback.message.edit_text("трек выставлен на голосование 👌", reply_markup=get_menu_keyboard())
@@ -237,9 +250,9 @@ async def make_poll(callback: CallbackQuery, callback_data: AddSongCallbackFacto
         for user in db.users:
             if user != callback.from_user.id:
                 msg = await bot.send_message(text=f"добавить в очередь "
-                                            f"{db.last_request[callback.from_user.id][raw_uri]}?",
-                                       chat_id=user,
-                                       reply_markup=builder.as_markup())
+                                                  f"{db.last_request[callback.from_user.id][raw_uri]}?",
+                                             chat_id=user,
+                                             reply_markup=builder.as_markup())
                 db.update_last_message(user, msg)
 
 
@@ -248,33 +261,36 @@ async def check_vote(callback: CallbackQuery, callback_data: ChangeSongsVote):
     try:
         if callback_data.action == 'add':
             db.add_vote(callback_data.uri)
-        msg = await callback.message.edit_text(f"голос учтен 😉, 'за' проголосовал(о) "
-                                         f"{db.get_amount_votes(callback_data.uri)} человек(а)",
-                                         reply_markup=get_menu_keyboard())
+        msg = await callback.message.edit_text(text=f"голос учтен 😉, 'за' проголосовал(о) "
+                                                    f"{db.get_amount_votes(callback_data.uri)} человек(а)",
+                                               reply_markup=None)
     except KeyError:
-        msg = await callback.message.edit_text("голосование за этот трек уже не актуально 😔", reply_markup=get_menu_keyboard())
-    db.update_last_message(callback.from_user.id, msg)
+        msg = await callback.message.edit_text("голосование за этот трек уже не актуально 😔", reply_markup=None)
+    await asyncio.sleep(2)
+    await callback.message.delete()
 
 
 @router.callback_query(F.data == 'start_pause')
 async def start_pause_track(callback: CallbackQuery):
     user_id = callback.from_user.id
     if user_id in db.admins or db.mode == db.SHARE_MODE:
-        spotify.start_pause()
+        await spotify.start_pause()
 
 
 @router.callback_query(F.data == 'next_track')
 async def next_track(callback: CallbackQuery):
     user_id = callback.from_user.id
     if user_id in db.admins or db.mode == db.SHARE_MODE:
-        spotify.next_track()
+        await spotify.next_track()
+        await menu(callback)
 
 
 @router.callback_query(F.data == 'previous_track')
 async def previous_track(callback: CallbackQuery):
     user_id = callback.from_user.id
     if user_id in db.admins or db.mode == db.SHARE_MODE:
-        spotify.previous_track()
+        await spotify.previous_track()
+        await menu(callback)
 
 
 @router.callback_query(F.data == 'confirm_end_session')
@@ -282,13 +298,14 @@ async def confirm_end_session(callback: CallbackQuery):
     builder = InlineKeyboardBuilder()
     builder.add(InlineKeyboardButton(text="✅", callback_data="end_session"))
     builder.add(InlineKeyboardButton(text='❎', callback_data="menu"))
-    msg = await callback.message.edit_text(text="вы действительно хотите завершить сессию?", reply_markup=builder.as_markup())
+    msg = await callback.message.edit_text(text="вы действительно хотите завершить сессию?",
+                                           reply_markup=builder.as_markup())
     db.update_last_message(callback.from_user.id, msg)
 
 
 @router.callback_query(F.data == 'end_session')
 async def end_session(callback: CallbackQuery):
     db.clear()
-    msg = await callback.message.edit_text(text='сессия завершена, для начала новой используйте команду "/start"', reply_markup=None)
+    msg = await callback.message.edit_text(text='сессия завершена, для начала новой используйте команду "/start"',
+                                           reply_markup=None)
     db.update_last_message(callback.from_user.id, msg)
-

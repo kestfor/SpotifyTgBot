@@ -1,5 +1,5 @@
+import asyncio
 import time
-
 import spotipy
 from spotipy.oauth2 import SpotifyClientCredentials
 from spotipy.oauth2 import SpotifyOAuth
@@ -9,7 +9,8 @@ from config_reader import config
 class Spotify:
 
     _prefix = 'spotify:track:'
-    _update_seconds = 5
+    _update_seconds = 10
+
 
     def __init__(self):
         self._client_id = config.spotify_client_id.get_secret_value()
@@ -30,7 +31,7 @@ class Spotify:
                                                                          client_secret=self._client_secret,
                                                                          redirect_uri=self._redirect_uri))
         self._playback = self._spotify_read_playback_state.current_playback()
-        self._last_playback_update = time.time()
+        self._last_playback_update: time = time.time()
 
     @staticmethod
     def __get_info(item) -> list[list[str]]:
@@ -53,41 +54,42 @@ class Spotify:
         if uri.find(Spotify._prefix) == -1:
             return Spotify._prefix + uri
 
-    def force_update_playback(self):
+    async def force_update_playback(self):
+        print("вызов force_update_playback")
         """
         updates playback client
         :return:
         """
         self._playback = self._spotify_read_playback_state.current_playback()
+        self._last_playback_update = time.time()
 
-    def _update_playback(self):
-        """
-        updates playback client if cached time exceeded
-        :return:
-        """
-        if abs(time.time() - self._last_playback_update) > self._update_seconds:
-            self._playback = self._spotify_read_playback_state.current_playback()
+    async def _update_playback(self):
+        print("вызов _update_playback")
+        time_passed = time.time() - self._last_playback_update
+        print(time_passed)
+        if time_passed >= self._update_seconds:
+            await self.force_update_playback()
 
     def _is_playing(self):
         return self._playback["is_playing"]
 
-    def get_curr_track_name(self):
-        self._update_playback()
+    async def get_curr_track_name(self):
+        await self._update_playback()
         if self._playback is not None:
             return self._playback["item"]["name"]
         else:
             return None
 
-    def get_curr_track_artists(self):
-        self._update_playback()
+    async def get_curr_track_artists(self):
+        await self._update_playback()
         if self._playback is not None:
             artists = [artist["name"] for artist in self._playback["item"]["artists"]]
             return artists
         else:
             return None
 
-    def get_curr_track(self, separator=' - '):
-        self._update_playback()
+    async def get_curr_track(self, separator=' - '):
+        await self._update_playback()
         if self._playback is not None:
             return ', '.join([artist["name"] for artist in self._playback["item"]["artists"]]) + separator + self._playback["item"]["name"]
         else:
@@ -96,21 +98,24 @@ class Spotify:
     def add_track_to_queue(self, uri: str):
         self._spotify_modify_state_client.add_to_queue(uri)
 
-    def next_track(self):
+    async def next_track(self):
         self._spotify_modify_state_client.next_track()
-        self.force_update_playback()
+        await asyncio.sleep(1)
+        await self.force_update_playback()
 
-    def previous_track(self):
+    async def previous_track(self):
         self._spotify_modify_state_client.previous_track()
-        self.force_update_playback()
+        await asyncio.sleep(1)
+        await self.force_update_playback()
 
-    def start_pause(self):
-        self.force_update_playback()
+    async def start_pause(self):
+        await self.force_update_playback()
         if self._is_playing():
             self._spotify_modify_state_client.pause_playback()
         else:
             self._spotify_modify_state_client.start_playback()
-        self.force_update_playback()
+        await asyncio.sleep(1)
+        await self.force_update_playback()
 
     def search(self, request: str) -> list[list[str]]:
         """
