@@ -10,6 +10,7 @@ class Spotify:
 
     _prefix = 'spotify:track:'
     _update_seconds = 10
+    _force_update_timeout = 1
 
 
     def __init__(self):
@@ -55,7 +56,6 @@ class Spotify:
             return Spotify._prefix + uri
 
     async def force_update_playback(self):
-        print("вызов force_update_playback")
         """
         updates playback client
         :return:
@@ -64,9 +64,7 @@ class Spotify:
         self._last_playback_update = time.time()
 
     async def _update_playback(self):
-        print("вызов _update_playback")
         time_passed = time.time() - self._last_playback_update
-        print(time_passed)
         if time_passed >= self._update_seconds:
             await self.force_update_playback()
 
@@ -100,12 +98,12 @@ class Spotify:
 
     async def next_track(self):
         self._spotify_modify_state_client.next_track()
-        await asyncio.sleep(1)
+        await asyncio.sleep(self._force_update_timeout)
         await self.force_update_playback()
 
     async def previous_track(self):
         self._spotify_modify_state_client.previous_track()
-        await asyncio.sleep(1)
+        await asyncio.sleep(self._force_update_timeout)
         await self.force_update_playback()
 
     async def start_pause(self):
@@ -114,7 +112,7 @@ class Spotify:
             self._spotify_modify_state_client.pause_playback()
         else:
             self._spotify_modify_state_client.start_playback()
-        await asyncio.sleep(1)
+        await asyncio.sleep(self._force_update_timeout)
         await self.force_update_playback()
 
     def search(self, request: str) -> list[list[str]]:
