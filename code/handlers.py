@@ -7,12 +7,13 @@ from aiogram.filters.command import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery
 from aiogram.filters.callback_data import CallbackData
-from spotify_api import spotify, AsyncSpotify
+from spotify_api import AsyncSpotify
 from data_base import db
 from filters import EmptyDataBaseFilter
 from states import SetTokenState
 
 router = Router()
+spotify: AsyncSpotify
 
 
 class AddSongCallbackFactory(CallbackData, prefix="fabAddSong"):
@@ -39,17 +40,30 @@ async def handle_connection_error(callback: CallbackQuery | Message):
     db.update_last_message(user_id, msg)
 
 
+def get_volume_emoji(volume: int):
+    volumes = "🔇🔈🔉🔊"
+    if volume == 0:
+        return volumes[0]
+    elif 0 < volume <= 33:
+        return volumes[1]
+    elif 33 < volume <= 66:
+        return volumes[2]
+    elif 66 < volume <= 100:
+        return volumes[3]
+
+
 async def get_menu_text():
     mode = "share" if db.mode == db.SHARE_MODE else "poll"
     curr_track = await spotify.get_curr_track()
     if curr_track is None:
         text = f'🎹 режим: {mode}\n\n🔥 людей в сессии: {len(db.users)}'
     else:
+        volume = spotify.volume
+        volume_str = f"{get_volume_emoji(volume)}: {volume}%\n\n" if spotify.is_playing else ""
         artists, name = curr_track
-        text = (f'🎧: {name}\n\n'
-                f"{'😎' * len(artists)}️: {', '.join(artists)}\n\n"
-                f"🎹 режим: {mode}\n\n"
-                f'🔥 людей в сессии: {len(db.users)}')
+        text = (f"🎧: {name}\n\n{'😎' * len(artists)}️: {', '.join(artists)}\n\n" + volume_str + f"🎹 режим: {mode}\n"
+                                                                                               f"\n🔥 людей в сессии:"
+                                                                                               f" {len(db.users)}")
     return text
 
 
@@ -57,8 +71,11 @@ def get_admin_menu_keyboard():
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text="посмотреть токен", callback_data="view_token"))
     builder.row(InlineKeyboardButton(text='изменить режим', callback_data="change_mode"))
-    builder.row(InlineKeyboardButton(text='🎵 добавить трек 🎵', callback_data='add_track'))
     builder.row(InlineKeyboardButton(text="❌ завершить сессию ❌", callback_data="confirm_end_session"))
+    builder.row(InlineKeyboardButton(text='🎵 добавить трек 🎵', callback_data='add_track'))
+    builder.row(InlineKeyboardButton(text='🔉', callback_data='decrease_volume'))
+    builder.add(InlineKeyboardButton(text='🔇', callback_data='mute_volume'))
+    builder.add(InlineKeyboardButton(text='🔊', callback_data="increase_volume"))
     builder.row(InlineKeyboardButton(text="🔄 обновить 🔄", callback_data='menu'))
     builder.row(InlineKeyboardButton(text="⏮", callback_data="previous_track"))
     builder.add(InlineKeyboardButton(text="⏯", callback_data="start_pause"))
@@ -70,6 +87,10 @@ def get_user_menu_keyboard():
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text="посмотреть токен", callback_data="view_token"))
     builder.row(InlineKeyboardButton(text='🎵 добавить трек 🎵', callback_data="add_track"))
+    if db.mode == db.SHARE_MODE:
+        builder.row(InlineKeyboardButton(text='🔉', callback_data='decrease_volume'))
+        builder.add(InlineKeyboardButton(text='🔇', callback_data='mute_volume'))
+        builder.add(InlineKeyboardButton(text='🔊', callback_data="increase_volume"))
     builder.row(InlineKeyboardButton(text="🔄обновить🔄", callback_data='menu'))
     if db.mode == db.SHARE_MODE:
         builder.row(InlineKeyboardButton(text="⏮", callback_data="previous_track"))
@@ -320,8 +341,10 @@ async def start_pause_track(callback: CallbackQuery):
     if user_id in db.admins or db.mode == db.SHARE_MODE:
         try:
             await spotify.start_pause()
+            await menu(callback)
         except ConnectionError:
             pass
+
 
 
 @router.callback_query(F.data == 'next_track')
@@ -372,3 +395,21 @@ async def end_session(callback: CallbackQuery, bot: Bot):
         db.update_last_message(user, msg)
     db.clear(last_message=True)
     await spotify.close()
+
+
+@router.callback_query(F.data == 'increase_volume')
+async def increase_volume(callback: CallbackQuery):
+    await spotify.increase_volume()
+    await menu(callback)
+
+
+@router.callback_query(F.data == 'decrease_volume')
+async def decrease_volume(callback: CallbackQuery):
+    await spotify.decrease_volume()
+    await menu(callback)
+
+
+@router.callback_query(F.data == 'mute_volume')
+async def mute_volume(callback: CallbackQuery):
+    await spotify.mute_unmute()
+    await menu(callback)

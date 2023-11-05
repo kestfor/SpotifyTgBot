@@ -5,7 +5,7 @@ from config_reader import config
 from utils import generate_token
 from scheduler import scheduler
 from aiogram.types import Message
-from spotify_api import spotify
+from spotify_api import AsyncSpotify
 
 
 class DataBase:
@@ -123,7 +123,7 @@ class DataBase:
         if uri in self._poll_results:
             self._poll_results.pop(uri)
 
-    def add_vote(self, uri: str):
+    def add_vote(self, uri: str, spotify: AsyncSpotify):
         if uri in self._poll_results:
             self._poll_results[uri] += 1
             if self._poll_results[uri] >= self.__AMOUNT_TO_ADD_TO_QUEUE:
