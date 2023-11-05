@@ -13,7 +13,7 @@ class DataBase:
     __POLL_MODE = 0
     __SHARE_MODE = 1
     __MINUTES_FOR_POLL = 5
-    __AMOUNT_TO_ADD_TO_QUEUE = 5
+    __AMOUNT_TO_ADD_TO_QUEUE = 2
 
     def __init__(self):
         self._DATA_PATH = config.data_path.get_secret_value()
@@ -28,8 +28,18 @@ class DataBase:
     def is_active(self):
         return self._token is not None
 
-    def clear(self):
-        self.__init__()
+    def clear(self, **kwargs):
+        """
+
+        :param kwargs: last_message=True means that all will be cleared except last_message
+        :return:
+        """
+        if kwargs["last_message"]:
+            copy = self._last_message_from_bot.copy()
+            self.__init__()
+            self._last_message_from_bot = copy
+        else:
+            self.__init__()
 
     def add_user(self, chat_id):
         self._users.add(chat_id)
@@ -52,6 +62,10 @@ class DataBase:
         for key, value in tmp.items():
             res[int(key)] = value
         return res
+
+    @property
+    def amount_to_add_to_queue(self):
+        return self.__AMOUNT_TO_ADD_TO_QUEUE
 
     @property
     def users(self):
@@ -117,7 +131,7 @@ class DataBase:
                 self.del_song_from_poll(uri)
                 scheduler.remove_job(uri)
         else:
-            raise KeyError("uri")
+            raise KeyError("uri is not valid")
 
     def get_amount_votes(self, uri: str):
         return self._poll_results[uri]
