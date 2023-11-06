@@ -5,7 +5,7 @@ from config_reader import config
 from utils import generate_token
 from scheduler import scheduler
 from aiogram.types import Message
-from spotify_api import AsyncSpotify
+from spotify import AsyncSpotify
 
 
 class DataBase:

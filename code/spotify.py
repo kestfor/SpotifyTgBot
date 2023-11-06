@@ -1,7 +1,10 @@
+import time
+
 from asyncspotify.client import get_id
 from config_reader import config
 import asyncspotify
 import asyncspotify.http
+import spotify_errors
 
 
 class AsyncSpotify:
@@ -21,6 +24,7 @@ class AsyncSpotify:
             await self.http.player_add_to_queue(uri, device_id=get_id(device))
 
     _prefix = 'spotify%3Atrack%3A'
+    _update_timeout = 5
     _volume_step = 5
 
     def __init__(self):
@@ -42,6 +46,8 @@ class AsyncSpotify:
         self._volume = 0
         self._saved_volume = self._volume
         self._playing: bool = True
+        self._cached_currently_playing: asyncspotify.CurrentlyPlaying = None
+        self._last_update_time = 0
 
     async def authorize(self):
         await self._session.authorize()
@@ -51,10 +57,20 @@ class AsyncSpotify:
             self._playing = player.is_playing
             self._volume = device.volume_percent
         except asyncspotify.exceptions.NotFound:
-            raise ConnectionError("there is no active device")
+            raise spotify_errors.ConnectionError("there is no active device")
 
     async def close(self):
         await self._session.close()
+
+    async def force_update(self):
+        self._cached_currently_playing = await self._session.player_currently_playing()
+        self._playing = self._cached_currently_playing.is_playing
+
+    async def update(self):
+        now = time.time()
+        if (now - self._last_update_time) >= self._update_timeout:
+            await self.force_update()
+
 
     @staticmethod
     async def __get_info(item) -> list[list[str]]:
@@ -75,33 +91,42 @@ class AsyncSpotify:
 
     async def get_curr_track(self):
         try:
-            currently_playing = await self._session.player_currently_playing()
+            await self.update()
+            currently_playing = self._cached_currently_playing
             curr_track = currently_playing.track
             artists = [artist.name for artist in curr_track.artists]
             name = curr_track.name
             return [artists, name]
         except:
-            raise ConnectionError
+            raise spotify_errors.ConnectionError
 
     async def add_track_to_queue(self, uri):
         try:
             await self._session.player_add_to_queue(uri)
+        except asyncspotify.Forbidden:
+            raise spotify_errors.PremiumRequired
         except:
-            raise ConnectionError
+            raise spotify_errors.ConnectionError
 
     async def next_track(self):
         try:
             await self._session.player_next()
             self._playing = True
+            await self.force_update()
+        except asyncspotify.Forbidden:
+            raise spotify_errors.PremiumRequired
         except:
-            raise ConnectionError
+            raise spotify_errors.ConnectionError
 
     async def previous_track(self):
         try:
             await self._session.player_prev()
             self._playing = True
+            await self.force_update()
+        except asyncspotify.Forbidden:
+            raise spotify_errors.PremiumRequired
         except:
-            raise ConnectionError
+            raise spotify_errors.ConnectionError
 
     async def start_pause(self):
         try:
@@ -112,24 +137,40 @@ class AsyncSpotify:
             else:
                 await self._session.player_play()
                 self._playing = True
+        except asyncspotify.Forbidden:
+            raise spotify_errors.PremiumRequired
         except:
-            raise ConnectionError
+            raise spotify_errors.ConnectionError
 
     async def increase_volume(self):
-        self._volume = min(100, self._volume + self._volume_step)
-        await self._session.player_volume(self._volume)
+        try:
+
+            await self._session.player_volume(min(100, self._volume + self._volume_step))
+        except asyncspotify.Forbidden:
+            raise spotify_errors.PremiumRequired
+        else:
+            self._volume = min(100, self._volume + self._volume_step)
 
     async def decrease_volume(self):
-        self._volume = max(0, self._volume - self._volume_step)
-        await self._session.player_volume(self._volume)
+        try:
+            await self._session.player_volume(max(0, self._volume - self._volume_step))
+        except asyncspotify.Forbidden:
+            raise spotify_errors.PremiumRequired
+        else:
+            self._volume = max(0, self._volume - self._volume_step)
 
     async def mute_unmute(self):
-        if self._volume == 0:
-            self._volume = self._saved_volume
-        else:
-            self._saved_volume = self._volume
-            self._volume = 0
-        await self._session.player_volume(self._volume)
+        old_values = [self._volume, self._saved_volume]
+        try:
+            if self._volume == 0:
+                self._volume = self._saved_volume
+            else:
+                self._saved_volume = self._volume
+                self._volume = 0
+            await self._session.player_volume(self._volume)
+        except asyncspotify.Forbidden:
+            self._volume, self._saved_volume = old_values
+            raise spotify_errors.PremiumRequired
 
     @property
     def volume(self):
@@ -137,6 +178,10 @@ class AsyncSpotify:
 
     @property
     def is_playing(self):
+        if self._playing == self._cached_currently_playing.is_playing:
+            pass
+        else:
+            self.force_update()
         return self._playing
 
     async def search(self, request: str) -> list[list[str]]:
@@ -147,4 +192,4 @@ class AsyncSpotify:
         try:
             return await self.__get_info(await self._session.search("track", q=request, limit=10))
         except:
-            raise ConnectionError
+            raise spotify_errors.ConnectionError
