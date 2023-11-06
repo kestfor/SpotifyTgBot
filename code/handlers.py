@@ -11,7 +11,7 @@ from spotify_errors import PremiumRequired, ConnectionError
 from spotify import AsyncSpotify
 from data_base import db
 from filters import EmptyDataBaseFilter
-from states import SetTokenState
+from states import SetTokenState, SetAmountForPollState
 
 router = Router()
 spotify: AsyncSpotify
@@ -198,10 +198,27 @@ async def set_share_mode(callback: CallbackQuery):
 
 
 @router.callback_query(F.data == 'set_poll_mode')
-async def set_share_mode(callback: CallbackQuery):
+async def set_share_mode(callback: CallbackQuery, state: FSMContext):
     db.mode = db.POLL_MODE
-    msg = await callback.message.edit_text(text='установлен режим poll ✅❎', reply_markup=get_menu_keyboard())
+    msg = await callback.message.edit_text(text='введите число голосов, необходимых для добавления в очередь:', reply_markup=None)
     db.update_last_message(callback.from_user.id, msg)
+    await state.set_state(SetAmountForPollState.set_amount)
+
+
+@router.message(F.text.len() > 0, SetAmountForPollState.set_amount)
+async def set_amount_for_poll(message: Message, state: FSMContext):
+    amount = message.text
+    await db.del_last_message(message.from_user.id)
+    try:
+        amount = int(amount)
+        db.AMOUNT_TO_ADD_TO_QUEUE = amount
+    except ValueError:
+        msg = await message.answer("введите неотрицательное число", reply_markup=None)
+    else:
+        await state.clear()
+        msg = await message.answer(text='установлен режим poll ✅❎', reply_markup=get_menu_keyboard())
+    await message.delete()
+    db.update_last_message(message.from_user.id, msg)
 
 
 @router.message(Command("start"))
@@ -252,8 +269,6 @@ async def set_user_token(callback: CallbackQuery, state: FSMContext):
 async def add_user_to_session(message: Message, state: FSMContext):
     token = message.text
     user_id = message.from_user.id
-    print(user_id)
-    print(message.from_user.username)
     if db.token == token:
         await db.del_last_message(user_id)
         await asyncio.sleep(0.3)

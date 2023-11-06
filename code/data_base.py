@@ -64,6 +64,17 @@ class DataBase:
         return res
 
     @property
+    def AMOUNT_TO_ADD_TO_QUEUE(self):
+        return self.__AMOUNT_TO_ADD_TO_QUEUE
+
+    @AMOUNT_TO_ADD_TO_QUEUE.setter
+    def AMOUNT_TO_ADD_TO_QUEUE(self, amount: int):
+        if isinstance(amount, int) and amount >= 0:
+            self.__AMOUNT_TO_ADD_TO_QUEUE = amount
+        else:
+            raise ValueError
+
+    @property
     def amount_to_add_to_queue(self):
         return self.__AMOUNT_TO_ADD_TO_QUEUE
 
