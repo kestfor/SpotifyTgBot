@@ -43,7 +43,7 @@ class AsyncSpotify:
         )
 
         self._session = AsyncSpotify.ModifiedClient(self._auth)
-        self._volume = 0
+        self._volume = 100
         self._saved_volume = self._volume
         self._playing: bool = True
         self._cached_currently_playing: asyncspotify.CurrentlyPlaying = None
@@ -56,6 +56,7 @@ class AsyncSpotify:
             device = player.device
             self._playing = player.is_playing
             self._volume = device.volume_percent
+            self._saved_volume = self._volume
         except asyncspotify.exceptions.NotFound:
             raise spotify_errors.ConnectionError("there is no active device")
 
