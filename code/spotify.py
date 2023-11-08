@@ -65,7 +65,6 @@ class AsyncSpotify:
 
     async def force_update(self):
         self._cached_currently_playing = await self._session.player_currently_playing()
-        self._playing = self._cached_currently_playing.is_playing
 
     async def update(self):
         now = time.time()
@@ -133,11 +132,11 @@ class AsyncSpotify:
         try:
             currently_playing = await self._session.player_currently_playing()
             if currently_playing.is_playing:
-                await self._session.player_pause()
                 self._playing = False
+                await self._session.player_pause()
             else:
-                await self._session.player_play()
                 self._playing = True
+                await self._session.player_play()
         except asyncspotify.Forbidden:
             raise spotify_errors.PremiumRequired
         except:
@@ -179,10 +178,7 @@ class AsyncSpotify:
 
     @property
     def is_playing(self):
-        if self._playing == self._cached_currently_playing.is_playing:
-            pass
-        else:
-            self.force_update()
+        print(self._playing)
         return self._playing
 
     async def search(self, request: str) -> list[list[str]]:

@@ -124,7 +124,7 @@ def get_menu_keyboard():
 async def admin_start(message: Message):
     builder = InlineKeyboardBuilder()
     if db.is_active():
-        msg = await message.answer(text=f"сессия запущена 🔥\ntoken: {db.token}", reply_markup=get_menu_keyboard())
+        msg = await message.answer(text=f"сессия запущена 🔥\ntoken: <code>{db.token}</code>", reply_markup=get_menu_keyboard(), parse_mode="HTML")
     else:
         builder.row(InlineKeyboardButton(text="начать сессию", callback_data='start_session'))
         msg = await message.answer("Spotify 🎧", reply_markup=builder.as_markup())
@@ -217,7 +217,8 @@ async def set_share_mode(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == 'get_settings')
 async def get_settings(callback: CallbackQuery):
-    await callback.message.edit_text(text='настройки', reply_markup=get_settings_keyboard(callback.from_user.id))
+    msg = await callback.message.edit_text(text='настройки', reply_markup=get_settings_keyboard(callback.from_user.id))
+    db.update_last_message(callback.from_user.id, msg)
 
 
 @router.message(F.text.len() > 0, SetAmountForPollState.set_amount)
@@ -263,13 +264,13 @@ async def start_session(callback: CallbackQuery):
         await handle_connection_error(callback)
     else:
         msg = await callback.message.edit_text(text=f"сессия запущена 🔥\n"
-                                                    f"token: {db.token}", reply_markup=get_menu_keyboard())
+                                                    f"token: <code>{db.token}</code>", reply_markup=get_menu_keyboard(), parse_mode="HTML")
         db.update_last_message(callback.from_user.id, msg)
 
 
 @router.callback_query(F.data == 'view_token')
 async def view_token(callback: CallbackQuery):
-    msg = await callback.message.edit_text(f"token: {db.token}", reply_markup=get_menu_keyboard())
+    msg = await callback.message.edit_text(f"token: <code>{db.token}</code>", reply_markup=get_menu_keyboard(), parse_mode="HTML")
     db.update_last_message(callback.from_user.id, msg)
 
 
@@ -288,7 +289,7 @@ async def add_user_to_session(message: Message, state: FSMContext):
         await db.del_last_message(user_id)
         await asyncio.sleep(0.3)
         db.add_user(user_id)
-        msg = await message.answer(text="вы подключились к сессии", reply_markup=get_user_menu_keyboard())
+        msg = await message.answer(text=await get_menu_text(), reply_markup=get_user_menu_keyboard())
         await message.delete()
         await state.clear()
     else:
@@ -386,7 +387,7 @@ async def check_vote(callback: CallbackQuery, callback_data: ChangeSongsVote):
                                          reply_markup=None)
         if callback_data.action == 'add':
             try:
-                db.add_vote(callback_data.uri)
+                await db.add_vote(callback_data.uri, spotify)
             except ConnectionError:
                 pass
             except PremiumRequired:
@@ -396,7 +397,7 @@ async def check_vote(callback: CallbackQuery, callback_data: ChangeSongsVote):
 
 
 @router.callback_query(F.data == 'start_pause')
-async def start_pause_track(callback: CallbackQuery):
+async def start_pause_track(callback: CallbackQuery, bot: Bot):
     user_id = callback.from_user.id
     if user_id in db.admins or db.mode == db.SHARE_MODE:
         try:
@@ -406,12 +407,13 @@ async def start_pause_track(callback: CallbackQuery):
             return
         except ConnectionError:
             pass
-        await update_menu_for_all_users(callback.from_user.id)
         await menu(callback)
+        await update_menu_for_all_users(bot, callback.from_user.id)
+
 
 
 @router.callback_query(F.data == 'next_track')
-async def next_track(callback: CallbackQuery):
+async def next_track(callback: CallbackQuery, bot: Bot):
     user_id = callback.from_user.id
     if user_id in db.admins or db.mode == db.SHARE_MODE:
         try:
@@ -426,11 +428,11 @@ async def next_track(callback: CallbackQuery):
         except ConnectionError:
             pass
         await menu(callback)
-        await update_menu_for_all_users(callback.from_user.id)
+        await update_menu_for_all_users(bot, callback.from_user.id)
 
 
 @router.callback_query(F.data == 'previous_track')
-async def previous_track(callback: CallbackQuery):
+async def previous_track(callback: CallbackQuery, bot: Bot):
     user_id = callback.from_user.id
     if user_id in db.admins or db.mode == db.SHARE_MODE:
         try:
@@ -445,7 +447,7 @@ async def previous_track(callback: CallbackQuery):
         except ConnectionError:
             pass
         await menu(callback)
-        await update_menu_for_all_users(callback.from_user.id)
+        await update_menu_for_all_users(bot, callback.from_user.id)
 
 
 @router.callback_query(F.data == 'confirm_end_session')
@@ -475,7 +477,7 @@ async def end_session(callback: CallbackQuery, bot: Bot):
 
 
 @router.callback_query(F.data == 'increase_volume')
-async def increase_volume(callback: CallbackQuery):
+async def increase_volume(callback: CallbackQuery, bot: Bot):
     try:
         await spotify.increase_volume()
     except PremiumRequired:
@@ -484,11 +486,11 @@ async def increase_volume(callback: CallbackQuery):
     except ConnectionError:
         pass
     await menu(callback)
-    await update_menu_for_all_users(callback.from_user.id)
+    await update_menu_for_all_users(bot, callback.from_user.id)
 
 
 @router.callback_query(F.data == 'decrease_volume')
-async def decrease_volume(callback: CallbackQuery):
+async def decrease_volume(callback: CallbackQuery, bot: Bot):
     try:
         await spotify.decrease_volume()
     except PremiumRequired:
@@ -497,11 +499,11 @@ async def decrease_volume(callback: CallbackQuery):
     except ConnectionError:
         pass
     await menu(callback)
-    await update_menu_for_all_users(callback.from_user.id)
+    await update_menu_for_all_users(bot, callback.from_user.id)
 
 
 @router.callback_query(F.data == 'mute_volume')
-async def mute_volume(callback: CallbackQuery):
+async def mute_volume(callback: CallbackQuery, bot: Bot):
     try:
         await spotify.mute_unmute()
     except PremiumRequired:
@@ -510,7 +512,7 @@ async def mute_volume(callback: CallbackQuery):
     except ConnectionError:
         pass
     await menu(callback)
-    await update_menu_for_all_users(callback.from_user.id)
+    await update_menu_for_all_users(bot, callback.from_user.id)
 
 
 @router.callback_query(F.data == 'leave_session')
@@ -538,10 +540,16 @@ async def confirm_leave_session(callback: CallbackQuery):
     await callback.message.delete()
 
 
-async def update_menu_for_all_users(*ignore_list):
+async def update_menu_for_all_users(bot: Bot, *ignore_list):
     for user_id, message in db.last_message.items():
+        old = message.text
+        curr = await get_menu_text()
+        if old == curr:
+            print("Жопа")
         if user_id not in ignore_list:
-            if isinstance(message, CallbackQuery):
-                callback: CallbackQuery = message
-                if callback.data == 'menu':
-                    await refresh(callback)
+            if "🎧" in message.text:
+                if user_id in db.admins:
+                    markup = get_admin_menu_keyboard()
+                else:
+                    markup = get_user_menu_keyboard()
+                await bot.edit_message_text(chat_id=user_id, text=curr, message_id=message.message_id, reply_markup=markup)

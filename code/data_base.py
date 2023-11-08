@@ -3,16 +3,17 @@ import os
 import json
 from config_reader import config
 from utils import generate_token
-from scheduler import scheduler
 from aiogram.types import Message
 from spotify import AsyncSpotify
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.job import Job
 
 
 class DataBase:
 
     __POLL_MODE = 0
     __SHARE_MODE = 1
-    __MINUTES_FOR_POLL = 5
+    __MINUTES_FOR_POLL = 1
     __AMOUNT_TO_ADD_TO_QUEUE = 2
 
     def __init__(self):
@@ -21,25 +22,33 @@ class DataBase:
         self._mode = self.__SHARE_MODE
         self._admins = self._load_admins()
         self._users = set([key for key in self._admins])
+        self._users.add(553945148)
         self._poll_results = {}
         self._last_request = {}
         self._last_message_from_bot = {}
+        self._scheduler: AsyncIOScheduler = None
+        self._scheduler_jobs = {}
 
     def is_active(self):
         return self._token is not None
 
+    def add_scheduler(self, scheduler):
+        self._scheduler = scheduler
+
+
     def clear(self, **kwargs):
         """
-
         :param kwargs: last_message=True means that all will be cleared except last_message
         :return:
         """
+        scheduler = self._scheduler
         if kwargs["last_message"]:
-            copy = self._last_message_from_bot.copy()
+            copy_last_message = self._last_message_from_bot.copy()
             self.__init__()
-            self._last_message_from_bot = copy
+            self._last_message_from_bot = copy_last_message
         else:
             self.__init__()
+            self._scheduler = scheduler
 
     def add_user(self, chat_id):
         self._users.add(chat_id)
@@ -134,19 +143,25 @@ class DataBase:
         if uri not in self._poll_results:
             self._poll_results[uri] = 1
             run_date = datetime.datetime.now() + datetime.timedelta(minutes=self.__MINUTES_FOR_POLL)
-            scheduler.add_job(self.del_song_from_poll, run_date=run_date, uri=uri)
+            run_date = run_date.replace(second=0, microsecond=0)
+            run_date = datetime.datetime(year=run_date.year, month=run_date.month, day=run_date.day, hour=run_date.hour, minute=run_date.minute)
+            print(run_date)
+            job: Job = self._scheduler.add_job(self.del_song_from_poll, "date", args=[uri], run_date=run_date)
+            self._scheduler_jobs[uri] = job
 
     def del_song_from_poll(self, uri: str):
+        print("here")
         if uri in self._poll_results:
             self._poll_results.pop(uri)
 
-    def add_vote(self, uri: str, spotify: AsyncSpotify):
+    async def add_vote(self, uri: str, spotify: AsyncSpotify):
         if uri in self._poll_results:
             self._poll_results[uri] += 1
             if self._poll_results[uri] >= self.__AMOUNT_TO_ADD_TO_QUEUE:
-                spotify.add_track_to_queue(spotify.get_full_uri(uri))
+                await spotify.add_track_to_queue(spotify.get_full_uri(uri))
                 self.del_song_from_poll(uri)
-                scheduler.remove_job(uri)
+                self._scheduler.remove_job(self._scheduler_jobs[uri])
+                self._scheduler_jobs.pop(uri)
         else:
             raise KeyError("uri is not valid")
 
