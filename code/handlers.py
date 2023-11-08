@@ -463,15 +463,18 @@ async def confirm_end_session(callback: CallbackQuery):
 @router.callback_query(F.data == 'end_session')
 async def end_session(callback: CallbackQuery, bot: Bot):
     for user in db.users:
-        if user not in db.admins:
-            msg = await bot.send_message(chat_id=user, text="сессия завершена, для ее начала обратитесь к админам",
-                                         reply_markup=None)
-        else:
-            msg = await bot.send_message(chat_id=user,
-                                         text='сессия завершена, для начала новой используйте команду "/start"',
-                                         reply_markup=None)
-        await db.del_last_message(user)
-        db.update_last_message(user, msg)
+        try:
+            if user not in db.admins:
+                msg = await bot.send_message(chat_id=user, text="сессия завершена, для ее начала обратитесь к админам",
+                                             reply_markup=None)
+            else:
+                msg = await bot.send_message(chat_id=user,
+                                             text='сессия завершена, для начала новой используйте команду "/start"',
+                                             reply_markup=None)
+            await db.del_last_message(user)
+            db.update_last_message(user, msg)
+        except:
+            pass
     db.clear(last_message=True)
     await spotify.close()
 
