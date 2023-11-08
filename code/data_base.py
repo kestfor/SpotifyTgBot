@@ -74,6 +74,12 @@ class DataBase:
         else:
             raise ValueError
 
+    def del_user(self, user_id):
+        self._users.remove(user_id)
+
+    def del_admin(self, user_id):
+        self._admins.pop(user_id)
+
     @property
     def amount_to_add_to_queue(self):
         return self.__AMOUNT_TO_ADD_TO_QUEUE

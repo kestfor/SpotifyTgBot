@@ -73,11 +73,21 @@ async def get_menu_text():
     return text
 
 
-def get_admin_menu_keyboard():
+def get_settings_keyboard(user_id):
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text="посмотреть токен", callback_data="view_token"))
-    builder.row(InlineKeyboardButton(text='изменить режим', callback_data="change_mode"))
-    builder.row(InlineKeyboardButton(text="❌ завершить сессию ❌", callback_data="confirm_end_session"))
+    if user_id in db.admins:
+        builder.row(InlineKeyboardButton(text='изменить режим', callback_data="change_mode"))
+    builder.row(InlineKeyboardButton(text='покинуть сессию', callback_data="leave_session"))
+    if user_id in db.admins:
+        builder.row(InlineKeyboardButton(text="❌ завершить сессию ❌", callback_data="confirm_end_session"))
+    builder.row(InlineKeyboardButton(text='назад', callback_data="menu"))
+    return builder.as_markup()
+
+
+def get_admin_menu_keyboard():
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text="настройки", callback_data="get_settings"))
     builder.row(InlineKeyboardButton(text='🎵 добавить трек 🎵', callback_data='add_track'))
     builder.row(InlineKeyboardButton(text='🔉', callback_data='decrease_volume'))
     builder.add(InlineKeyboardButton(text='🔇', callback_data='mute_volume'))
@@ -91,7 +101,7 @@ def get_admin_menu_keyboard():
 
 def get_user_menu_keyboard():
     builder = InlineKeyboardBuilder()
-    builder.row(InlineKeyboardButton(text="посмотреть токен", callback_data="view_token"))
+    builder.row(InlineKeyboardButton(text="настройки", callback_data="get_settings"))
     builder.row(InlineKeyboardButton(text='🎵 добавить трек 🎵', callback_data="add_track"))
     if db.mode == db.SHARE_MODE:
         builder.row(InlineKeyboardButton(text='🔉', callback_data='decrease_volume'))
@@ -139,7 +149,7 @@ async def menu(callback: CallbackQuery):
     if user_id in db.admins:
         keyboard = get_admin_menu_keyboard()
         msg = await callback.message.edit_text(text=text, reply_markup=keyboard)
-    elif user_id in db.users:
+    else:
         keyboard = get_user_menu_keyboard()
         msg = await callback.message.edit_text(text=text, reply_markup=keyboard)
     db.update_last_message(user_id, msg)
@@ -203,6 +213,11 @@ async def set_share_mode(callback: CallbackQuery, state: FSMContext):
     msg = await callback.message.edit_text(text='введите число голосов, необходимых для добавления в очередь:', reply_markup=None)
     db.update_last_message(callback.from_user.id, msg)
     await state.set_state(SetAmountForPollState.set_amount)
+
+
+@router.callback_query(F.data == 'get_settings')
+async def get_settings(callback: CallbackQuery):
+    await callback.message.edit_text(text='настройки', reply_markup=get_settings_keyboard(callback.from_user.id))
 
 
 @router.message(F.text.len() > 0, SetAmountForPollState.set_amount)
@@ -496,6 +511,31 @@ async def mute_volume(callback: CallbackQuery):
         pass
     await menu(callback)
     await update_menu_for_all_users(callback.from_user.id)
+
+
+@router.callback_query(F.data == 'leave_session')
+async def leave_session(callback: CallbackQuery, bot: Bot):
+    user_id = callback.from_user.id
+    builder = InlineKeyboardBuilder()
+    builder.add(InlineKeyboardButton(text="✅", callback_data="confirm_leave_session"))
+    builder.add(InlineKeyboardButton(text='❎', callback_data="menu"))
+    if user_id not in db.admins or len(db.admins) > 1:
+        msg = await callback.message.edit_text("Вы уверены, что хотите покинуть сессию?", reply_markup=builder.as_markup())
+        db.update_last_message(user_id, msg)
+    else:
+        await confirm_end_session(callback)
+
+
+@router.callback_query(F.data == "confirm_leave_session")
+async def confirm_leave_session(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    if user_id in db.admins:
+        db.del_admin(user_id)
+    if user_id in db.users:
+        db.del_user(user_id)
+    await callback.message.edit_text(text='вы покинули сессию')
+    await asyncio.sleep(5)
+    await callback.message.delete()
 
 
 async def update_menu_for_all_users(*ignore_list):
