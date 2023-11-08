@@ -13,7 +13,7 @@ class DataBase:
 
     __POLL_MODE = 0
     __SHARE_MODE = 1
-    __MINUTES_FOR_POLL = 1
+    __MINUTES_FOR_POLL = 3
     __AMOUNT_TO_ADD_TO_QUEUE = 2
 
     def __init__(self):
@@ -22,7 +22,6 @@ class DataBase:
         self._mode = self.__SHARE_MODE
         self._admins = self._load_admins()
         self._users = set([key for key in self._admins])
-        self._users.add(553945148)
         self._poll_results = {}
         self._last_request = {}
         self._last_message_from_bot = {}
