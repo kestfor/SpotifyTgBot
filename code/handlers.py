@@ -545,10 +545,7 @@ async def confirm_leave_session(callback: CallbackQuery):
 
 async def update_menu_for_all_users(bot: Bot, *ignore_list):
     for user_id, message in db.last_message.items():
-        old = message.text
         curr = await get_menu_text()
-        if old == curr:
-            print("Жопа")
         if user_id not in ignore_list:
             if "🎧" in message.text:
                 if user_id in db.admins:

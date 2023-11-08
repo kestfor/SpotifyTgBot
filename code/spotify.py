@@ -178,7 +178,6 @@ class AsyncSpotify:
 
     @property
     def is_playing(self):
-        print(self._playing)
         return self._playing
 
     async def search(self, request: str) -> list[list[str]]:
