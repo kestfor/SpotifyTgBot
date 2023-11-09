@@ -64,13 +64,15 @@ class AsyncSpotify:
         await self._session.close()
 
     async def force_update(self):
-        self._cached_currently_playing = await self._session.player_currently_playing()
+        try:
+            self._cached_currently_playing = await self._session.player_currently_playing()
+        except:
+            raise spotify_errors.ConnectionError
 
     async def update(self):
         now = time.time()
         if (now - self._last_update_time) >= self._update_timeout:
             await self.force_update()
-
 
     @staticmethod
     async def __get_info(item) -> list[list[str]]:

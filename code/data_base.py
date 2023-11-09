@@ -34,20 +34,12 @@ class DataBase:
     def add_scheduler(self, scheduler):
         self._scheduler = scheduler
 
-
-    def clear(self, **kwargs):
-        """
-        :param kwargs: last_message=True means that all will be cleared except last_message
-        :return:
-        """
+    def clear(self):
         scheduler = self._scheduler
-        if kwargs["last_message"]:
-            copy_last_message = self._last_message_from_bot.copy()
-            self.__init__()
-            self._last_message_from_bot = copy_last_message
-        else:
-            self.__init__()
-            self._scheduler = scheduler
+        copy_last_message = self._last_message_from_bot.copy()
+        self.__init__()
+        self._last_message_from_bot = copy_last_message
+        self._scheduler = scheduler
 
     def add_user(self, chat_id):
         self._users.add(chat_id)
