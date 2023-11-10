@@ -87,7 +87,7 @@ def get_settings_keyboard(user_id):
 
 def get_admin_menu_keyboard():
     builder = InlineKeyboardBuilder()
-    builder.row(InlineKeyboardButton(text="настройки", callback_data="get_settings"))
+    builder.row(InlineKeyboardButton(text="⚙️ настройки ⚙️", callback_data="get_settings"))
     builder.row(InlineKeyboardButton(text='🎵 добавить трек 🎵', callback_data='add_track'))
     builder.row(InlineKeyboardButton(text='🔉', callback_data='decrease_volume'))
     builder.add(InlineKeyboardButton(text='🔇', callback_data='mute_volume'))
@@ -101,7 +101,7 @@ def get_admin_menu_keyboard():
 
 def get_user_menu_keyboard():
     builder = InlineKeyboardBuilder()
-    builder.row(InlineKeyboardButton(text="настройки", callback_data="get_settings"))
+    builder.row(InlineKeyboardButton(text="⚙️ настройки ⚙️", callback_data="get_settings"))
     builder.row(InlineKeyboardButton(text='🎵 добавить трек 🎵', callback_data="add_track"))
     if db.mode == db.SHARE_MODE:
         builder.row(InlineKeyboardButton(text='🔉', callback_data='decrease_volume'))
@@ -221,7 +221,7 @@ async def set_share_mode(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == 'get_settings')
 async def get_settings(callback: CallbackQuery):
     if db.is_active():
-        msg = await callback.message.edit_text(text='настройки', reply_markup=get_settings_keyboard(callback.from_user.id))
+        msg = await callback.message.edit_text(text='⚙️ настройки ⚙️', reply_markup=get_settings_keyboard(callback.from_user.id))
         db.update_last_message(callback.from_user.id, msg)
     else:
         await handle_not_active_session(callback)
@@ -489,11 +489,16 @@ async def end_session(callback: CallbackQuery, bot: Bot):
                                              text='сессия завершена, для начала новой используйте команду "/start"',
                                              reply_markup=None)
             await db.del_last_message(user)
-            db.update_last_message(user, msg)
+            await del_message(msg)
         except:
             pass
     await spotify.close()
     db.clear()
+
+
+async def del_message(msg: Message):
+    await asyncio.sleep(5)
+    await msg.delete()
 
 
 @router.callback_query(F.data == 'increase_volume')
