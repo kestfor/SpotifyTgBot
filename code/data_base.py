@@ -14,10 +14,16 @@ class DataBase:
     __POLL_MODE = 0
     __SHARE_MODE = 1
     __MINUTES_FOR_POLL = 3
-    __AMOUNT_TO_ADD_TO_QUEUE = 2
+    __AMOUNT_TO_ADD_TO_QUEUE = 5
+    __FULL_UPDATE_TIMEOUT_SECONDS = 20
 
     def __init__(self):
         self._DATA_PATH = config.data_path.get_secret_value()
+        if not os.path.exists(self._DATA_PATH):
+            os.system(f"mkdir {self._DATA_PATH}")
+        self._admins_file_name = config.admin_file.get_secret_value()
+        if self._DATA_PATH not in self._admins_file_name:
+            raise ValueError("путь к файлу с администраторами должен проходить через 'data_path'")
         self._token = None
         self._mode = self.__SHARE_MODE
         self._admins = self._load_admins()
@@ -27,9 +33,14 @@ class DataBase:
         self._last_message_from_bot = {}
         self._scheduler: AsyncIOScheduler = None
         self._scheduler_jobs = {}
+        self._update_func = None
 
     def is_active(self):
         return self._token is not None
+
+    async def include_update_function(self, function, *args):
+        self._update_func = function
+        await self.update_menu(*args)
 
     def add_scheduler(self, scheduler):
         self._scheduler = scheduler
@@ -57,18 +68,18 @@ class DataBase:
                 file.write(json.dumps(data, ensure_ascii=False, indent=4))
 
     def _load_admins(self) -> dict:
-        tmp = self.__load_dict("admins.json")
+        tmp = self.__load_dict(self._admins_file_name)
         res = {}
         for key, value in tmp.items():
             res[int(key)] = value
         return res
 
     @property
-    def AMOUNT_TO_ADD_TO_QUEUE(self):
+    def amount_to_add_to_queue(self):
         return self.__AMOUNT_TO_ADD_TO_QUEUE
 
-    @AMOUNT_TO_ADD_TO_QUEUE.setter
-    def AMOUNT_TO_ADD_TO_QUEUE(self, amount: int):
+    @amount_to_add_to_queue.setter
+    def amount_to_add_to_queue(self, amount: int):
         if isinstance(amount, int) and amount >= 0:
             self.__AMOUNT_TO_ADD_TO_QUEUE = amount
         else:
@@ -81,19 +92,15 @@ class DataBase:
         self._admins.pop(user_id)
 
     @property
-    def amount_to_add_to_queue(self):
-        return self.__AMOUNT_TO_ADD_TO_QUEUE
-
-    @property
     def users(self):
         return self._users.copy()
 
     @property
-    def POLL_MODE(self):
+    def poll_mode(self):
         return self.__POLL_MODE
 
     @property
-    def SHARE_MODE(self):
+    def share_mode(self):
         return self.__SHARE_MODE
 
     @property
@@ -107,6 +114,13 @@ class DataBase:
         if user_id in self._last_message_from_bot:
             await self._last_message_from_bot[user_id].delete()
             self._last_message_from_bot.pop(user_id)
+
+    async def update_menu(self, *args):
+        if self._update_func is not None:
+            await self._update_func(*args)
+        if db.is_active():
+            run_date = datetime.datetime.now() + datetime.timedelta(seconds=self.__FULL_UPDATE_TIMEOUT_SECONDS)
+            self._scheduler.add_job(self.update_menu, "date", args=[*args], run_date=run_date)
 
     @property
     def admins(self):
@@ -135,10 +149,8 @@ class DataBase:
             self._poll_results[uri] = 1
             run_date = datetime.datetime.now() + datetime.timedelta(minutes=self.__MINUTES_FOR_POLL)
             run_date = run_date.replace(second=0, microsecond=0)
-            run_date = datetime.datetime(year=run_date.year, month=run_date.month, day=run_date.day, hour=run_date.hour, minute=run_date.minute)
-            print(run_date)
             job: Job = self._scheduler.add_job(self.del_song_from_poll, "date", args=[uri], run_date=run_date)
-            self._scheduler_jobs[uri] = job
+            self._scheduler_jobs[uri] = job.id
 
     def del_song_from_poll(self, uri: str):
         print("here")

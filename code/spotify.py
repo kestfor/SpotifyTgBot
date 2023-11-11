@@ -1,3 +1,4 @@
+import asyncio
 import time
 
 from asyncspotify.client import get_id
@@ -8,11 +9,18 @@ import spotify_errors
 
 
 class AsyncSpotify:
-
     class ModifiedHTTP(asyncspotify.http.HTTP):
         async def player_add_to_queue(self, uri: str, device_id):
             r = asyncspotify.Route('POST', f'me/player/queue?uri={uri}', device=device_id)
             await self.request(r)
+
+        async def transfer_playback(self, device_id):
+            r = asyncspotify.Route("PUT", "me/player")
+            await self.request(r, json={"device_ids": [device_id]})
+
+        async def start_playlist(self, uri, device_id):
+            r = asyncspotify.Route("PUT", "me/player/play", device_id=device_id)
+            await self.request(r, json={"context_uri": uri})
 
     class ModifiedClient(asyncspotify.client.Client):
 
@@ -23,7 +31,22 @@ class AsyncSpotify:
         async def player_add_to_queue(self, uri: str, device=None):
             await self.http.player_add_to_queue(uri, device_id=get_id(device))
 
-    _prefix = 'spotify%3Atrack%3A'
+        async def transfer_playback(self, device):
+            await self.http.transfer_playback(device_id=get_id(device))
+
+        async def get_player(self, **kwargs) -> asyncspotify.CurrentlyPlayingContext | None:
+            data = await self.http.get_player(**kwargs)
+
+            if data is not None:
+                return asyncspotify.CurrentlyPlayingContext(self, data)
+
+        async def start_playlist(self, uri: str, device=None):
+            await self.http.start_playlist(uri=uri, device_id=get_id(device))
+
+    _track_prefix = 'spotify%3Atrack%3A'
+    _album_prefix = 'spotify:album:'
+    _playlist_prefix = 'spotify:playlist:'
+    _artist_prefix = 'spotify:artist:'
     _update_timeout = 5
     _volume_step = 5
 
@@ -33,7 +56,7 @@ class AsyncSpotify:
         self._spotify_username = config.spotify_username.get_secret_value()
         self._redirect_uri = config.spotify_redirect_uri.get_secret_value()
         self._scope = asyncspotify.Scope(user_modify_playback_state=True, user_read_playback_state=True)
-        self._token_file = '../data/secret.json'
+        self._token_file = config.token_file.get_secret_value()
 
         self._auth = asyncspotify.EasyAuthorizationCodeFlow(
             client_id=self._client_id,
@@ -43,9 +66,9 @@ class AsyncSpotify:
         )
 
         self._session = AsyncSpotify.ModifiedClient(self._auth)
-        self._volume = 100
+        self._volume = 50
         self._saved_volume = self._volume
-        self._playing: bool = True
+        self._playing: bool = False
         self._cached_currently_playing: asyncspotify.CurrentlyPlaying = None
         self._last_update_time = 0
 
@@ -59,6 +82,29 @@ class AsyncSpotify:
             self._saved_volume = self._volume
         except asyncspotify.exceptions.NotFound:
             raise spotify_errors.ConnectionError("there is no active device")
+
+    async def is_active(self):
+        try:
+            await self._session.player_currently_playing()
+            return True
+        except:
+            return False
+
+    async def start_playlist(self, url: str):
+        if not url.startswith("https://open.spotify.com/"):
+            raise ValueError
+        url = url[0:url.find('?')]
+        splited = url.split('/')
+        type, id = splited[-2], splited[-1]
+        if type == 'album':
+            uri = AsyncSpotify._album_prefix + id
+        elif type == 'playlist':
+            uri = AsyncSpotify._playlist_prefix + id
+        elif type == 'artist':
+            uri = AsyncSpotify._artist_prefix + id
+        else:
+            raise ValueError("wrong url")
+        await self._session.start_playlist(uri)
 
     async def close(self):
         await self._session.close()
@@ -88,8 +134,8 @@ class AsyncSpotify:
 
     @staticmethod
     def get_full_uri(uri: str):
-        if uri.find(AsyncSpotify._prefix) == -1:
-            return AsyncSpotify._prefix + uri
+        if uri.find(AsyncSpotify._track_prefix) == -1:
+            return AsyncSpotify._track_prefix + uri
 
     async def get_curr_track(self):
         try:
@@ -160,6 +206,18 @@ class AsyncSpotify:
             raise spotify_errors.PremiumRequired
         else:
             self._volume = max(0, self._volume - self._volume_step)
+
+    async def get_devices(self):
+        devices = await self._session.get_devices()
+        return devices
+
+    async def transfer_player(self, device: str | asyncspotify.Device):
+        try:
+            await self._session.transfer_playback(device)
+            await asyncio.sleep(1)
+            await self._session.player_volume(self._volume)
+        except:
+            raise ConnectionError
 
     async def mute_unmute(self):
         old_values = [self._volume, self._saved_volume]

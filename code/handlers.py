@@ -1,5 +1,7 @@
 import asyncio
+import random
 
+import aiogram.exceptions
 from aiogram.dispatcher.router import Router
 from aiogram import F, Bot
 from aiogram.utils.keyboard import InlineKeyboardBuilder, InlineKeyboardButton
@@ -10,7 +12,7 @@ from aiogram.filters.callback_data import CallbackData
 from spotify_errors import PremiumRequired, ConnectionError
 from spotify import AsyncSpotify
 from data_base import db
-from filters import EmptyDataBaseFilter
+from filters import EmptyDataBaseFilter, UrlFilter
 from states import SetTokenState, SetAmountForPollState
 
 router = Router()
@@ -24,6 +26,11 @@ class AddSongCallbackFactory(CallbackData, prefix="fabAddSong"):
 class ChangeSongsVote(CallbackData, prefix="fabAddVote"):
     uri: str
     action: str
+
+
+class ChangeDeviceFactory(CallbackData, prefix="fabDevice"):
+    id: str
+    is_active: bool
 
 
 async def handle_connection_error(callback: CallbackQuery | Message):
@@ -53,13 +60,20 @@ def get_volume_emoji(volume: int):
         return volumes[3]
 
 
-async def handle_premium_required_error(callback: CallbackQuery):
+async def handle_premium_required_error(callback: CallbackQuery | Message):
     builder = InlineKeyboardBuilder()
     builder.add(InlineKeyboardButton(text='в меню', callback_data="menu"))
-    await callback.message.edit_text("Для этой функции требуется spotify premium", reply_markup=builder.as_markup())
+    if isinstance(callback, CallbackQuery):
+        msg = await callback.message.edit_text("Для этой функции требуется spotify premium",
+                                               reply_markup=builder.as_markup())
+    else:
+        msg = await callback.answer("Для этой функции требуется spotify premium", reply_markup=builder.as_markup())
+    db.update_last_message(callback.from_user.id, msg)
 
 
 async def get_menu_text():
+    global spotify
+    emoji_artists = '🥺🤫😐🙄😮😄😆🥹☺️🙂😌😙😎😏🤩😋🥶🥵🤭🤔😈'
     curr_track = await spotify.get_curr_track()
     if curr_track is None:
         text = f'🔥 людей в сессии: {len(db.users)}'
@@ -67,7 +81,7 @@ async def get_menu_text():
         volume = spotify.volume
         volume_str = f"{get_volume_emoji(volume)}: {volume}%\n\n" if spotify.is_playing else ""
         artists, name = curr_track
-        text = (f"🎧: {name}\n\n{'😎' * len(artists)}️: {', '.join(artists)}\n\n" + volume_str +
+        text = (f"🎧: {name}\n\n{''.join(random.choices(emoji_artists, k=len(artists)))}️: {', '.join(artists)}\n\n" + volume_str +
                 f"🔥 людей в сессии:"
                 f" {len(db.users)}")
     return text
@@ -76,11 +90,12 @@ async def get_menu_text():
 def get_settings_keyboard(user_id):
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text="посмотреть токен", callback_data="view_token"))
+    builder.row(InlineKeyboardButton(text="сменить устройство", callback_data="view_devices"))
     if user_id in db.admins:
         builder.row(InlineKeyboardButton(text='изменить режим', callback_data="change_mode"))
     builder.row(InlineKeyboardButton(text='покинуть сессию', callback_data="leave_session"))
     if user_id in db.admins:
-        builder.row(InlineKeyboardButton(text="❌ завершить сессию ❌", callback_data="confirm_end_session"))
+        builder.row(InlineKeyboardButton(text="завершить сессию", callback_data="confirm_end_session"))
     builder.row(InlineKeyboardButton(text='назад', callback_data="menu"))
     return builder.as_markup()
 
@@ -88,6 +103,7 @@ def get_settings_keyboard(user_id):
 def get_admin_menu_keyboard():
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text="⚙️ настройки ⚙️", callback_data="get_settings"))
+    builder.row(InlineKeyboardButton(text='💽 включить плейлист 💽', callback_data='start_playlist'))
     builder.row(InlineKeyboardButton(text='🎵 добавить трек 🎵', callback_data='add_track'))
     builder.row(InlineKeyboardButton(text='🔉', callback_data='decrease_volume'))
     builder.add(InlineKeyboardButton(text='🔇', callback_data='mute_volume'))
@@ -102,13 +118,15 @@ def get_admin_menu_keyboard():
 def get_user_menu_keyboard():
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text="⚙️ настройки ⚙️", callback_data="get_settings"))
+    if db.mode == db.share_mode:
+        builder.row(InlineKeyboardButton(text='💽 включить плейлист 💽', callback_data='start_playlist'))
     builder.row(InlineKeyboardButton(text='🎵 добавить трек 🎵', callback_data="add_track"))
-    if db.mode == db.SHARE_MODE:
+    if db.mode == db.share_mode:
         builder.row(InlineKeyboardButton(text='🔉', callback_data='decrease_volume'))
         builder.add(InlineKeyboardButton(text='🔇', callback_data='mute_volume'))
         builder.add(InlineKeyboardButton(text='🔊', callback_data="increase_volume"))
     builder.row(InlineKeyboardButton(text="🔄обновить🔄", callback_data='refresh'))
-    if db.mode == db.SHARE_MODE:
+    if db.mode == db.share_mode:
         builder.row(InlineKeyboardButton(text="⏮", callback_data="previous_track"))
         builder.add(InlineKeyboardButton(text="⏯", callback_data="start_pause"))
         builder.add(InlineKeyboardButton(text="⏭", callback_data="next_track"))
@@ -124,7 +142,8 @@ def get_menu_keyboard():
 async def admin_start(message: Message):
     builder = InlineKeyboardBuilder()
     if db.is_active():
-        msg = await message.answer(text=f"сессия запущена 🔥\ntoken: <code>{db.token}</code>", reply_markup=get_menu_keyboard(), parse_mode="HTML")
+        msg = await message.answer(text=f"сессия запущена 🔥\ntoken: <code>{db.token}</code>",
+                                   reply_markup=get_menu_keyboard(), parse_mode="HTML")
     else:
         builder.row(InlineKeyboardButton(text="начать сессию", callback_data='start_session'))
         msg = await message.answer("Spotify 🎧", reply_markup=builder.as_markup())
@@ -182,14 +201,71 @@ async def menu_callback(callback: CallbackQuery):
     await menu(callback)
 
 
+@router.callback_query(F.data == 'start_playlist')
+async def start_playlist_callback(callback: CallbackQuery):
+    msg = await callback.message.edit_text("отправь ссылку на альбом/плейлист/артиста",
+                                           reply_markup=get_menu_keyboard())
+    db.update_last_message(callback.from_user.id, msg)
+
+
+@router.message(UrlFilter())
+async def start_playlist(message: Message):
+    await db.del_last_message(message.from_user.id)
+    try:
+        await spotify.start_playlist(message.text)
+    except ValueError:
+        msg = await message.answer(
+            "неверная ссылка, необходима ссылка на spotify контент в виде автора, плейлиста или альбома",
+            reply_markup=get_menu_keyboard())
+        db.update_last_message(message.from_user.id, msg)
+    except ConnectionError:
+        await handle_connection_error(message)
+    except PremiumRequired:
+        await handle_premium_required_error(message)
+    else:
+        msg = await message.answer("плейлист успешно запущен", reply_markup=get_menu_keyboard())
+        db.update_last_message(message.from_user.id, msg)
+    await message.delete()
+
+
+@router.callback_query(F.data == "view_devices")
+async def view_devices(callback: CallbackQuery):
+    keyboard = InlineKeyboardBuilder()
+    devices = await spotify.get_devices()
+    for device in devices:
+        text = device.name
+        text = '🟢 ' + text if device.is_active else '🔴 ' + text
+        keyboard.button(text=text, callback_data=ChangeDeviceFactory(id=device.id, is_active=device.is_active))
+    keyboard.adjust(1)
+    keyboard.row(InlineKeyboardButton(text="назад", callback_data="get_settings"))
+    await callback.message.edit_text(text="доступные устройства Spotify", reply_markup=keyboard.as_markup())
+
+
+@router.callback_query(ChangeDeviceFactory.filter())
+async def transfer_playback(callback: CallbackQuery, callback_data: ChangeDeviceFactory):
+    device_id = callback_data.id
+    is_active = callback_data.is_active
+    if is_active:
+        await callback.message.edit_text("данное устройство уже является текущим устройством воспроизведения",
+                                         reply_markup=get_menu_keyboard())
+        return
+    try:
+        await spotify.transfer_player(device_id)
+    except ConnectionError:
+        await callback.message.edit_text("не удалось изменить устройство", reply_markup=get_menu_keyboard())
+    else:
+        await callback.message.edit_text("устройство воспроизведения успешно изменено",
+                                         reply_markup=get_menu_keyboard())
+
+
 @router.callback_query(F.data != "start_session", EmptyDataBaseFilter())
 async def handle_not_active_session(callback: CallbackQuery):
     user_id = callback.from_user.id
     if user_id in db.admins:
-        msg = await callback.message.edit_text("сессия завершена, для запуска сессии используйте команду '/start'",
-                                               reply_markup=None)
+        await callback.message.edit_text("сессия завершена, для запуска сессии используйте команду '/start'",
+                                         reply_markup=None)
     else:
-        msg = await callback.message.edit_text("сессия завершена, обратитесь к админам для ее запуска")
+        await callback.message.edit_text("сессия завершена, обратитесь к админам для ее запуска")
     await asyncio.sleep(5)
     await callback.message.delete()
 
@@ -205,15 +281,16 @@ async def change_mode(callback: CallbackQuery):
 
 @router.callback_query(F.data == 'set_share_mode')
 async def set_share_mode(callback: CallbackQuery):
-    db.mode = db.SHARE_MODE
+    db.mode = db.share_mode
     msg = await callback.message.edit_text(text='установлен режим share ♻️', reply_markup=get_menu_keyboard())
     db.update_last_message(callback.from_user.id, msg)
 
 
 @router.callback_query(F.data == 'set_poll_mode')
 async def set_share_mode(callback: CallbackQuery, state: FSMContext):
-    db.mode = db.POLL_MODE
-    msg = await callback.message.edit_text(text='введите число голосов, необходимых для добавления в очередь:', reply_markup=None)
+    db.mode = db.poll_mode
+    msg = await callback.message.edit_text(text='введите число голосов, необходимых для добавления в очередь:',
+                                           reply_markup=None)
     db.update_last_message(callback.from_user.id, msg)
     await state.set_state(SetAmountForPollState.set_amount)
 
@@ -221,7 +298,8 @@ async def set_share_mode(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == 'get_settings')
 async def get_settings(callback: CallbackQuery):
     if db.is_active():
-        msg = await callback.message.edit_text(text='⚙️ настройки ⚙️', reply_markup=get_settings_keyboard(callback.from_user.id))
+        msg = await callback.message.edit_text(text='⚙️ настройки ⚙️',
+                                               reply_markup=get_settings_keyboard(callback.from_user.id))
         db.update_last_message(callback.from_user.id, msg)
     else:
         await handle_not_active_session(callback)
@@ -233,7 +311,7 @@ async def set_amount_for_poll(message: Message, state: FSMContext):
     await db.del_last_message(message.from_user.id)
     try:
         amount = int(amount)
-        db.AMOUNT_TO_ADD_TO_QUEUE = amount
+        db.amount_to_add_to_queue = amount
     except ValueError:
         msg = await message.answer("введите неотрицательное число", reply_markup=None)
     else:
@@ -260,7 +338,7 @@ async def start_by_command(message: Message):
 
 
 @router.callback_query(F.data == 'start_session')
-async def start_session(callback: CallbackQuery):
+async def start_session(callback: CallbackQuery, bot: Bot):
     db.set_token()
     try:
         global spotify
@@ -269,14 +347,17 @@ async def start_session(callback: CallbackQuery):
     except:
         await handle_connection_error(callback)
     else:
+        await db.include_update_function(update_menu_for_all_users, bot)
         msg = await callback.message.edit_text(text=f"сессия запущена 🔥\n"
-                                                    f"token: <code>{db.token}</code>", reply_markup=get_menu_keyboard(), parse_mode="HTML")
+                                                    f"token: <code>{db.token}</code>", reply_markup=get_menu_keyboard(),
+                                               parse_mode="HTML")
         db.update_last_message(callback.from_user.id, msg)
 
 
 @router.callback_query(F.data == 'view_token')
 async def view_token(callback: CallbackQuery):
-    msg = await callback.message.edit_text(f"token: <code>{db.token}</code>", reply_markup=get_menu_keyboard(), parse_mode="HTML")
+    msg = await callback.message.edit_text(f"token: <code>{db.token}</code>", reply_markup=get_menu_keyboard(),
+                                           parse_mode="HTML")
     db.update_last_message(callback.from_user.id, msg)
 
 
@@ -309,7 +390,9 @@ async def add_user_to_session(message: Message, state: FSMContext):
 @router.callback_query(F.data == "add_track")
 async def search_track_callback(callback: CallbackQuery):
     if db.is_active():
-        db.update_last_message(callback.from_user.id, await callback.message.edit_text("введите поисковой запрос 🔎"))
+        db.update_last_message(callback.from_user.id,
+                               await callback.message.edit_text("введите поисковой запрос 🔎",
+                                                                reply_markup=get_menu_keyboard()))
     else:
         await handle_not_active_session(callback)
 
@@ -356,7 +439,7 @@ async def search_track_handler(message: Message):
 async def make_poll(callback: CallbackQuery, callback_data: AddSongCallbackFactory, bot: Bot):
     raw_uri = callback_data.uri
     user_id = callback.from_user.id
-    if user_id in db.admins or db.mode == db.SHARE_MODE:
+    if user_id in db.admins or db.mode == db.share_mode:
         try:
             await spotify.add_track_to_queue(spotify.get_full_uri(raw_uri))
         except PremiumRequired:
@@ -366,7 +449,7 @@ async def make_poll(callback: CallbackQuery, callback_data: AddSongCallbackFacto
         else:
             msg = await callback.message.edit_text("трек добавлен в очередь 👌", reply_markup=get_menu_keyboard())
             db.update_last_message(user_id, msg)
-    elif db.mode == db.POLL_MODE:
+    elif db.mode == db.poll_mode:
         db.add_song_to_poll(raw_uri)
         msg = await callback.message.edit_text("трек выставлен на голосование 👌", reply_markup=get_menu_keyboard())
         db.update_last_message(user_id, msg)
@@ -411,7 +494,7 @@ async def start_pause_track(callback: CallbackQuery, bot: Bot):
         await handle_not_active_session(callback)
         return
     user_id = callback.from_user.id
-    if user_id in db.admins or db.mode == db.SHARE_MODE:
+    if user_id in db.admins or db.mode == db.share_mode:
         try:
             await spotify.start_pause()
         except PremiumRequired:
@@ -429,7 +512,7 @@ async def next_track(callback: CallbackQuery, bot: Bot):
         await handle_not_active_session(callback)
         return
     user_id = callback.from_user.id
-    if user_id in db.admins or db.mode == db.SHARE_MODE:
+    if user_id in db.admins or db.mode == db.share_mode:
         try:
             old_track = await spotify.get_curr_track()
             await spotify.next_track()
@@ -451,7 +534,7 @@ async def previous_track(callback: CallbackQuery, bot: Bot):
         await handle_not_active_session(callback)
         return
     user_id = callback.from_user.id
-    if user_id in db.admins or db.mode == db.SHARE_MODE:
+    if user_id in db.admins or db.mode == db.share_mode:
         try:
             old_track = await spotify.get_curr_track()
             await spotify.previous_track()
@@ -550,13 +633,14 @@ async def mute_volume(callback: CallbackQuery, bot: Bot):
 
 
 @router.callback_query(F.data == 'leave_session')
-async def leave_session(callback: CallbackQuery, bot: Bot):
+async def leave_session(callback: CallbackQuery):
     user_id = callback.from_user.id
     builder = InlineKeyboardBuilder()
     builder.add(InlineKeyboardButton(text="✅", callback_data="confirm_leave_session"))
     builder.add(InlineKeyboardButton(text='❎', callback_data="menu"))
     if user_id not in db.admins or len(db.admins) > 1:
-        msg = await callback.message.edit_text(text='Вы уверены, что хотите покинуть сессию?', reply_markup=builder.as_markup())
+        msg = await callback.message.edit_text(text='Вы уверены, что хотите покинуть сессию?',
+                                               reply_markup=builder.as_markup())
         db.update_last_message(user_id, msg)
     else:
         await confirm_end_session(callback)
@@ -576,11 +660,31 @@ async def confirm_leave_session(callback: CallbackQuery):
 
 async def update_menu_for_all_users(bot: Bot, *ignore_list):
     for user_id, message in db.last_message.items():
-        curr = await get_menu_text()
-        if user_id not in ignore_list:
-            if "🎧" in message.text:
-                if user_id in db.admins:
-                    markup = get_admin_menu_keyboard()
-                else:
-                    markup = get_user_menu_keyboard()
-                await bot.edit_message_text(chat_id=user_id, text=curr, message_id=message.message_id, reply_markup=markup)
+        old = message.text
+        if message.text[0] == "🎧":
+            try:
+                curr = await get_menu_text()
+            except ConnectionError:
+                curr = ('не удалось обнаружить активное устройство spotify 😞\n\n'
+                        'для обнаружения устройства:\n\n'
+                        '1) запустите приложение spotify и любой трек/альбом на устройстве, '
+                        'управление которым вы хотите осуществлять\n\n'
+                        '2) заново запустите сессию в боте\n (/start)')
+                markup = None
+                try:
+                    await bot.edit_message_text(chat_id=user_id, text=curr, message_id=message.message_id,
+                                                reply_markup=markup)
+                except aiogram.exceptions.TelegramBadRequest:
+                    pass
+                return
+            if user_id not in ignore_list:
+                if old != curr:
+                    if user_id in db.admins:
+                        markup = get_admin_menu_keyboard()
+                    else:
+                        markup = get_user_menu_keyboard()
+                    try:
+                        await bot.edit_message_text(chat_id=user_id, text=curr, message_id=message.message_id,
+                                                    reply_markup=markup)
+                    except aiogram.exceptions.TelegramBadRequest:
+                        pass

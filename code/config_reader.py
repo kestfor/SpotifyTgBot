@@ -10,6 +10,8 @@ class Settings(BaseSettings):
     spotify_client_secret: SecretStr
     spotify_redirect_uri: SecretStr
     data_path: SecretStr
+    token_file: SecretStr
+    admin_file: SecretStr
 
     class Config:
         env_file = "../.env"

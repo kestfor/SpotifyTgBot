@@ -9,5 +9,7 @@ class PremiumRequired(SpotifyErrors):
     """
     pass
 
+
 class ConnectionError(SpotifyErrors):
     pass
+
