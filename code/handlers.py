@@ -33,19 +33,30 @@ class ChangeDeviceFactory(CallbackData, prefix="fabDevice"):
     is_active: bool
 
 
-async def handle_connection_error(callback: CallbackQuery | Message):
-    text = ('не удалось обнаружить активное устройство spotify 😞\n\n'
-            'для обнаружения устройства:\n\n'
-            '1) запустите приложение spotify и любой трек/альбом на устройстве, управление которым вы хотите '
-            'осуществлять\n\n'
-            '2) заново запустите сессию в боте\n (/start)')
-    if isinstance(callback, CallbackQuery):
-        msg = await callback.message.edit_text(text=text)
-        user_id = callback.from_user.id
+async def handle_connection_error(callback: CallbackQuery | Message, bot=None):
+    user_id = callback.from_user.id
+    text = 'ошибка соединения с Spotify 😞'
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text="обновить", callback_data="refresh"))
+    builder.row(InlineKeyboardButton(text='покинуть сессию', callback_data='leave_session'))
+    if callback.from_user.id in db.admins:
+        builder.row(InlineKeyboardButton(text='завершить сессию', callback_data="confirm_end_session"))
+    if bot is None:
+        if isinstance(callback, CallbackQuery):
+            msg = await callback.message.edit_text(text=text, reply_markup=builder.as_markup())
+            user_id = callback.from_user.id
+        else:
+            msg = await callback.answer(text=text, reply_markup=builder.as_markup())
+            user_id = callback.from_user.id
+        db.update_last_message(user_id, msg)
     else:
-        msg = await callback.answer(text=text)
-        user_id = callback.from_user.id
-    db.update_last_message(user_id, msg)
+        try:
+            message = callback
+            msg = await bot.edit_message_text(chat_id=user_id, text=text, message_id=message.message_id,
+                                              reply_markup=builder.as_markup())
+            db.update_last_message(user_id, msg)
+        except:
+            pass
 
 
 def get_volume_emoji(volume: int):
@@ -81,9 +92,10 @@ async def get_menu_text():
         volume = spotify.volume
         volume_str = f"{get_volume_emoji(volume)}: {volume}%\n\n" if spotify.is_playing else ""
         artists, name = curr_track
-        text = (f"🎧: {name}\n\n{''.join(random.choices(emoji_artists, k=len(artists)))}️: {', '.join(artists)}\n\n" + volume_str +
-                f"🔥 людей в сессии:"
-                f" {len(db.users)}")
+        text = (
+                    f"🎧: {name}\n\n{''.join(random.choices(emoji_artists, k=len(artists)))}️: {', '.join(artists)}\n\n" + volume_str +
+                    f"🔥 людей в сессии:"
+                    f" {len(db.users)}")
     return text
 
 
@@ -339,14 +351,19 @@ async def start_by_command(message: Message):
 
 @router.callback_query(F.data == 'start_session')
 async def start_session(callback: CallbackQuery, bot: Bot):
-    db.set_token()
     try:
         global spotify
         spotify = AsyncSpotify()
         await spotify.authorize()
     except:
-        await handle_connection_error(callback)
+        text = ('не удалось обнаружить активное устройство spotify 😞\n\n'
+                'для обнаружения устройства:\n\n'
+                '1) запустите приложение spotify и любой трек/альбом на устройстве, управление которым вы хотите '
+                'осуществлять\n\n'
+                '2) заново запустите сессию (/start)')
+        await callback.message.edit_text(text=text, reply_markup=None)
     else:
+        db.set_token()
         await db.include_update_function(update_menu_for_all_users, bot)
         msg = await callback.message.edit_text(text=f"сессия запущена 🔥\n"
                                                     f"token: <code>{db.token}</code>", reply_markup=get_menu_keyboard(),
@@ -660,31 +677,26 @@ async def confirm_leave_session(callback: CallbackQuery):
 
 async def update_menu_for_all_users(bot: Bot, *ignore_list):
     for user_id, message in db.last_message.items():
-        old = message.text
-        if message.text[0] == "🎧":
+        old: str = message.text
+        if old.startswith("🎧"):
             try:
                 curr = await get_menu_text()
             except ConnectionError:
-                curr = ('не удалось обнаружить активное устройство spotify 😞\n\n'
-                        'для обнаружения устройства:\n\n'
-                        '1) запустите приложение spotify и любой трек/альбом на устройстве, '
-                        'управление которым вы хотите осуществлять\n\n'
-                        '2) заново запустите сессию в боте\n (/start)')
-                markup = None
-                try:
-                    await bot.edit_message_text(chat_id=user_id, text=curr, message_id=message.message_id,
-                                                reply_markup=markup)
-                except aiogram.exceptions.TelegramBadRequest:
-                    pass
+                await handle_connection_error(message, bot)
                 return
             if user_id not in ignore_list:
-                if old != curr:
+                old_split = old.split('\n\n')
+                old_split = [item[item.find(":") + 2:] for item in old_split]
+                curr_split = curr.split('\n\n')
+                curr_split = [item[item.find(":") + 2:] for item in curr_split]
+                if old_split != curr_split:
                     if user_id in db.admins:
                         markup = get_admin_menu_keyboard()
                     else:
                         markup = get_user_menu_keyboard()
                     try:
-                        await bot.edit_message_text(chat_id=user_id, text=curr, message_id=message.message_id,
-                                                    reply_markup=markup)
-                    except aiogram.exceptions.TelegramBadRequest:
+                        msg = await bot.edit_message_text(chat_id=user_id, text=curr, message_id=message.message_id,
+                                                          reply_markup=markup)
+                        db.update_last_message(user_id, msg)
+                    except:
                         pass

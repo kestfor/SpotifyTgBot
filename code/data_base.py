@@ -153,7 +153,6 @@ class DataBase:
             self._scheduler_jobs[uri] = job.id
 
     def del_song_from_poll(self, uri: str):
-        print("here")
         if uri in self._poll_results:
             self._poll_results.pop(uri)
 
