@@ -1,4 +1,5 @@
 import asyncio
+import os
 import random
 
 import aiogram.exceptions
@@ -7,13 +8,15 @@ from aiogram import F, Bot
 from aiogram.utils.keyboard import InlineKeyboardBuilder, InlineKeyboardButton
 from aiogram.filters.command import Command
 from aiogram.fsm.context import FSMContext
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import Message, CallbackQuery, FSInputFile
 from aiogram.filters.callback_data import CallbackData
 from spotify_errors import PremiumRequired, ConnectionError
 from spotify import AsyncSpotify
 from data_base import db
 from filters import EmptyDataBaseFilter, UrlFilter
+from aiogram.filters import CommandObject
 from states import SetTokenState, SetAmountForPollState
+import qrcode
 
 router = Router()
 spotify: AsyncSpotify
@@ -93,15 +96,17 @@ async def get_menu_text():
         volume_str = f"{get_volume_emoji(volume)}: {volume}%\n\n" if spotify.is_playing else ""
         artists, name = curr_track
         text = (
-                    f"🎧: {name}\n\n{''.join(random.choices(emoji_artists, k=len(artists)))}️: {', '.join(artists)}\n\n" + volume_str +
-                    f"🔥 людей в сессии:"
-                    f" {len(db.users)}")
+                f"🎧: {name}\n\n{''.join(random.choices(emoji_artists, k=len(artists)))}️: {', '.join(artists)}\n\n" + volume_str +
+                f"🔥 людей в сессии:"
+                f" {len(db.users)}")
     return text
 
 
 def get_settings_keyboard(user_id):
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text="посмотреть токен", callback_data="view_token"))
+    builder.row(InlineKeyboardButton(text='ссылка приглашение', callback_data="view_url"))
+    builder.row(InlineKeyboardButton(text='QR-код', callback_data="view_qr"))
     builder.row(InlineKeyboardButton(text="сменить устройство", callback_data="view_devices"))
     if user_id in db.admins:
         builder.row(InlineKeyboardButton(text='изменить режим', callback_data="change_mode"))
@@ -198,6 +203,46 @@ async def refresh(callback: CallbackQuery):
         await menu(callback)
     else:
         return
+
+
+@router.callback_query(F.data == 'view_url')
+async def view_url(callback: CallbackQuery):
+    if db.is_active():
+        url = f"t.me/SpotifyShareControlBot?start={db.token}"
+        msg = await callback.message.edit_text(text=url, reply_markup=get_menu_keyboard())
+        db.update_last_message(message=msg, user_id=callback.from_user.id, )
+    else:
+        await handle_not_active_session(callback)
+
+
+@router.callback_query(F.data == 'view_qr')
+async def view_qr(callback: CallbackQuery, bot: Bot):
+    if db.is_active():
+        url = f"t.me/SpotifyShareControlBot?start={db.token}"
+        img = qrcode.make(url)
+        img.save("qr_token")
+        document = FSInputFile("qr_token")
+        builder = InlineKeyboardBuilder()
+        builder.row(InlineKeyboardButton(text="в меню", callback_data="back_from_qr"))
+        msg = await bot.send_photo(photo=document, chat_id=callback.from_user.id, caption="пригласительная ссылка",
+                                   reply_markup=builder.as_markup())
+        await db.del_last_message(callback.from_user.id)
+        db.update_last_message(callback.from_user.id, msg)
+        os.remove("qr_token")
+    else:
+        await handle_not_active_session(callback)
+
+
+@router.callback_query(F.data == 'back_from_qr')
+async def back_from_qr(callback: CallbackQuery, bot: Bot):
+    text = await get_menu_text()
+    if callback.from_user.id in db.admins:
+        markup = get_admin_menu_keyboard()
+    else:
+        markup = get_user_menu_keyboard()
+    msg = await bot.send_message(text=text, chat_id=callback.from_user.id, reply_markup=markup)
+    await db.del_last_message(callback.from_user.id)
+    db.update_last_message(callback.from_user.id, msg)
 
 
 @router.callback_query(F.data == "refresh")
@@ -334,7 +379,7 @@ async def set_amount_for_poll(message: Message, state: FSMContext):
 
 
 @router.message(Command("start"))
-async def start_by_command(message: Message):
+async def start_by_command(message: Message, command: CommandObject, bot: Bot):
     try:
         await db.del_last_message(message.from_user.id)
     except:
@@ -345,7 +390,12 @@ async def start_by_command(message: Message):
     if user_id in db.admins:
         await admin_start(message)
     else:
-        await user_start(message)
+        token = command.args
+        if token is None or token == '':
+            await user_start(message)
+        else:
+            db.update_last_message(user_id, message)
+            await authorize(token, user_id, bot)
     await message.delete()
 
 
@@ -383,6 +433,19 @@ async def set_user_token(callback: CallbackQuery, state: FSMContext):
     msg = await callback.message.edit_text("введите токен")
     db.update_last_message(callback.from_user.id, msg)
     await state.set_state(SetTokenState.add_user)
+
+
+async def authorize(token, user_id, bot: Bot):
+    if db.token == token:
+        await db.del_last_message(user_id)
+        await asyncio.sleep(0.3)
+        db.add_user(user_id)
+        msg = await bot.send_message(text=await get_menu_text(), chat_id=user_id, reply_markup=get_user_menu_keyboard())
+    else:
+        await db.del_last_message(user_id)
+        await asyncio.sleep(0.3)
+        msg = await bot.send_message(chat_id=user_id, text='введен неверный токен или сессия не начата')
+    db.update_last_message(user_id, msg)
 
 
 @router.message(F.text.len() > 0, SetTokenState.add_user)
