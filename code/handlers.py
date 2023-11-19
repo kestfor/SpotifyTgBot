@@ -36,6 +36,11 @@ class ChangeDeviceFactory(CallbackData, prefix="fabDevice"):
     is_active: bool
 
 
+class AddAdminFactory(CallbackData, prefix="addAdmin"):
+    user_id: int
+    user_name: str
+
+
 async def handle_connection_error(callback: CallbackQuery | Message, bot=None):
     user_id = callback.from_user.id
     text = 'ошибка соединения с Spotify 😞'
@@ -110,6 +115,7 @@ def get_settings_keyboard(user_id):
     builder.row(InlineKeyboardButton(text="сменить устройство", callback_data="view_devices"))
     if user_id in db.admins:
         builder.row(InlineKeyboardButton(text='изменить режим', callback_data="change_mode"))
+        builder.row(InlineKeyboardButton(text='добавить админа', callback_data="view_admins_to_add"))
     builder.row(InlineKeyboardButton(text='покинуть сессию', callback_data="leave_session"))
     if user_id in db.admins:
         builder.row(InlineKeyboardButton(text="завершить сессию", callback_data="confirm_end_session"))
@@ -213,6 +219,28 @@ async def view_url(callback: CallbackQuery):
         db.update_last_message(message=msg, user_id=callback.from_user.id, )
     else:
         await handle_not_active_session(callback)
+
+
+@router.callback_query(F.data == 'view_admins_to_add')
+async def view_admins_to_add(callback: CallbackQuery):
+    if db.is_active():
+        builder = InlineKeyboardBuilder()
+        for user_id, username in db.users:
+            if user_id not in db.admins:
+                builder.button(text=username, callback_data=AddAdminFactory(user_id=user_id, user_name=username))
+        builder.button(text="назад", callback_data='menu')
+        await callback.message.edit_text(text='выберите пользователя', reply_markup=builder.as_markup())
+    else:
+        await handle_not_active_session(callback)
+
+
+@router.callback_query(AddAdminFactory.filter())
+async def add_admin(callback: CallbackQuery, callback_data: AddAdminFactory, bot):
+    db.add_admin(callback_data.user_id, callback_data.user_name)
+    await callback.message.edit_text(text='добавлен новый администратор', reply_markup=get_menu_keyboard())
+    users = set(db.users.keys())
+    users.remove(callback_data.user_id)
+    await update_menu_for_all_users(bot, users)
 
 
 @router.callback_query(F.data == 'view_qr')
@@ -395,7 +423,7 @@ async def start_by_command(message: Message, command: CommandObject, bot: Bot):
             await user_start(message)
         else:
             db.update_last_message(user_id, message)
-            await authorize(token, user_id, bot)
+            await authorize(token, user_id, message.from_user.username, bot)
     await message.delete()
 
 
@@ -435,11 +463,11 @@ async def set_user_token(callback: CallbackQuery, state: FSMContext):
     await state.set_state(SetTokenState.add_user)
 
 
-async def authorize(token, user_id, bot: Bot):
+async def authorize(token, user_id, user_name, bot: Bot):
     if db.token == token:
         await db.del_last_message(user_id)
         await asyncio.sleep(0.3)
-        db.add_user(user_id)
+        db.add_user(user_id, user_name)
         msg = await bot.send_message(text=await get_menu_text(), chat_id=user_id, reply_markup=get_user_menu_keyboard())
     else:
         await db.del_last_message(user_id)
@@ -451,11 +479,12 @@ async def authorize(token, user_id, bot: Bot):
 @router.message(F.text.len() > 0, SetTokenState.add_user)
 async def add_user_to_session(message: Message, state: FSMContext):
     token = message.text
+    user_name = message.from_user.username
     user_id = message.from_user.id
     if db.token == token:
         await db.del_last_message(user_id)
         await asyncio.sleep(0.3)
-        db.add_user(user_id)
+        db.add_user(user_id, user_name)
         msg = await message.answer(text=await get_menu_text(), reply_markup=get_user_menu_keyboard())
         await message.delete()
         await state.clear()
