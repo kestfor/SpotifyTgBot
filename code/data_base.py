@@ -27,8 +27,7 @@ class DataBase:
         self._token = None
         self._mode = self.__SHARE_MODE
         self._admins = self._load_admins()
-        self._users = set([key for key in self._admins])
-        self._users.add(553945148);
+        self._users = self._admins.copy()
         self._poll_results = {}
         self._last_request = {}
         self._last_message_from_bot = {}
@@ -53,8 +52,8 @@ class DataBase:
         self._last_message_from_bot = copy_last_message
         self._scheduler = scheduler
 
-    def add_user(self, chat_id):
-        self._users.add(chat_id)
+    def add_user(self, chat_id, user_name=None):
+        self._users[chat_id] = user_name
 
     def __load_dict(self, file_name) -> dict:
         if os.path.exists(f"{self._DATA_PATH}/{file_name}") and os.path.getsize(f"{self._DATA_PATH}/{file_name}") > 0:
@@ -87,7 +86,9 @@ class DataBase:
             raise ValueError
 
     def del_user(self, user_id):
-        self._users.remove(user_id)
+        self._users.pop(user_id)
+        if user_id in db.admins:
+            self.del_admin(user_id)
 
     def del_admin(self, user_id):
         self._admins.pop(user_id)
@@ -170,6 +171,9 @@ class DataBase:
 
     def get_amount_votes(self, uri: str):
         return self._poll_results[uri]
+
+    def add_admin(self, user_id, user_name):
+        self._admins[user_id] = user_name
 
     def update_last_request(self, user_id, items: dict):
         self._last_request[user_id] = {}
