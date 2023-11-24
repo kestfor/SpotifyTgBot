@@ -16,14 +16,21 @@ from data_base import db
 from filters import EmptyDataBaseFilter, UrlFilter
 from aiogram.filters import CommandObject
 from states import SetTokenState, SetAmountForPollState
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import qrcode
+
 
 router = Router()
 spotify: AsyncSpotify
+scheduler: AsyncIOScheduler
 
 
 class AddSongCallbackFactory(CallbackData, prefix="fabAddSong"):
     uri: str
+
+
+class ViewQueueFactory(CallbackData, prefix="fabViewQueue"):
+    id: str
 
 
 class ChangeSongsVote(CallbackData, prefix="fabAddVote"):
@@ -39,6 +46,16 @@ class ChangeDeviceFactory(CallbackData, prefix="fabDevice"):
 class AddAdminFactory(CallbackData, prefix="addAdmin"):
     user_id: int
     user_name: str
+
+
+def synchronize_queues(spotify_queue):
+    top_track = spotify_queue[0].id
+    ids = [item[1] for item in db.user_queue]
+    if top_track not in ids:
+        db.user_queue = []
+    else:
+        top_track_ind = ids.index(top_track)
+        db.user_queue = db.user_queue[top_track_ind:]
 
 
 async def handle_connection_error(callback: CallbackQuery | Message, bot=None):
@@ -115,7 +132,7 @@ def get_settings_keyboard(user_id):
     builder.row(InlineKeyboardButton(text="сменить устройство", callback_data="view_devices"))
     if user_id in db.admins:
         builder.row(InlineKeyboardButton(text='изменить режим', callback_data="change_mode"))
-        builder.row(InlineKeyboardButton(text='добавить админа', callback_data="view_admins_to_add"))
+        # builder.row(InlineKeyboardButton(text='добавить админа', callback_data="view_admins_to_add"))
     builder.row(InlineKeyboardButton(text='покинуть сессию', callback_data="leave_session"))
     if user_id in db.admins:
         builder.row(InlineKeyboardButton(text="завершить сессию", callback_data="confirm_end_session"))
@@ -128,6 +145,7 @@ def get_admin_menu_keyboard():
     builder.row(InlineKeyboardButton(text="⚙️ настройки ⚙️", callback_data="get_settings"))
     builder.row(InlineKeyboardButton(text='💽 включить плейлист 💽', callback_data='start_playlist'))
     builder.row(InlineKeyboardButton(text='🎵 добавить трек 🎵', callback_data='add_track'))
+    builder.row(InlineKeyboardButton(text='очередь', callback_data="view_queue"))
     builder.row(InlineKeyboardButton(text='🔉', callback_data='decrease_volume'))
     builder.add(InlineKeyboardButton(text='🔇', callback_data='mute_volume'))
     builder.add(InlineKeyboardButton(text='🔊', callback_data="increase_volume"))
@@ -144,6 +162,7 @@ def get_user_menu_keyboard():
     if db.mode == db.share_mode:
         builder.row(InlineKeyboardButton(text='💽 включить плейлист 💽', callback_data='start_playlist'))
     builder.row(InlineKeyboardButton(text='🎵 добавить трек 🎵', callback_data="add_track"))
+    builder.row(InlineKeyboardButton(text='очередь', callback_data="view_queue"))
     if db.mode == db.share_mode:
         builder.row(InlineKeyboardButton(text='🔉', callback_data='decrease_volume'))
         builder.add(InlineKeyboardButton(text='🔇', callback_data='mute_volume'))
@@ -211,12 +230,51 @@ async def refresh(callback: CallbackQuery):
         return
 
 
+async def get_queue_text():
+    global spotify
+    queue = await spotify.get_curr_user_queue()
+    synchronize_queues(queue)
+    queue = queue[0:min(len(db.user_queue), 10)]
+    if len(db.user_queue) == 0:
+        return None
+    else:
+        text = ''
+        ids = [item[1] for item in db.user_queue]
+        for item in queue:
+            author = '' if item.id not in ids else (' - поставил(а) @' + db.users[db.user_queue[ids.index(item.id)][0]])
+            text += (item.name[:item.name.find('(')] if '(' in item.name else item.name) + author + '\n\n'
+        return text
+
+
+@router.callback_query(F.data == 'view_queue')
+async def view_queue(callback: CallbackQuery):
+    if db.is_active():
+        queue = await get_queue_text()
+        if queue is None or len(queue) == 0:
+            msg = await callback.message.edit_text("в очереди нет треков", reply_markup=get_menu_keyboard())
+        else:
+            builder = InlineKeyboardBuilder()
+            builder.button(text='в меню', callback_data="menu")
+            builder.adjust(1)
+            msg = await callback.message.edit_text("треки в очереди:\n\n" + queue, reply_markup=builder.as_markup())
+        db.update_last_message(callback.from_user.id, msg)
+    else:
+        await handle_not_active_session(callback)
+
+
+@router.callback_query(ViewQueueFactory.filter())
+async def queue_action(callback: CallbackQuery, callback_data: ViewQueueFactory):
+    pass
+
+
 @router.callback_query(F.data == 'view_url')
 async def view_url(callback: CallbackQuery):
     if db.is_active():
         url = f"t.me/SpotifyShareControlBot?start={db.token}"
-        msg = await callback.message.edit_text(text=url, reply_markup=get_menu_keyboard())
-        db.update_last_message(message=msg, user_id=callback.from_user.id, )
+        builder = InlineKeyboardBuilder()
+        builder.row(InlineKeyboardButton(text="назад", callback_data="get_settings"))
+        msg = await callback.message.edit_text(text=url, reply_markup=builder.as_markup())
+        db.update_last_message(message=msg, user_id=callback.from_user.id)
     else:
         await handle_not_active_session(callback)
 
@@ -252,7 +310,7 @@ async def view_qr(callback: CallbackQuery, bot: Bot):
         document = FSInputFile("qr_token")
         builder = InlineKeyboardBuilder()
         builder.row(InlineKeyboardButton(text="в меню", callback_data="back_from_qr"))
-        msg = await bot.send_photo(photo=document, chat_id=callback.from_user.id, caption="пригласительная ссылка",
+        msg = await bot.send_photo(photo=document, chat_id=callback.from_user.id,
                                    reply_markup=builder.as_markup())
         await db.del_last_message(callback.from_user.id)
         db.update_last_message(callback.from_user.id, msg)
@@ -442,7 +500,7 @@ async def start_session(callback: CallbackQuery, bot: Bot):
         await callback.message.edit_text(text=text, reply_markup=None)
     else:
         db.set_token()
-        await db.include_update_function(update_menu_for_all_users, bot)
+        await db.include_update_functions([update_queue_for_all_users, update_menu_for_all_users], [[bot], [bot]])
         msg = await callback.message.edit_text(text=f"сессия запущена 🔥\n"
                                                     f"token: <code>{db.token}</code>", reply_markup=get_menu_keyboard(),
                                                parse_mode="HTML")
@@ -451,7 +509,9 @@ async def start_session(callback: CallbackQuery, bot: Bot):
 
 @router.callback_query(F.data == 'view_token')
 async def view_token(callback: CallbackQuery):
-    msg = await callback.message.edit_text(f"token: <code>{db.token}</code>", reply_markup=get_menu_keyboard(),
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text="назад", callback_data="get_settings"))
+    msg = await callback.message.edit_text(f"token: <code>{db.token}</code>", reply_markup=builder.as_markup(),
                                            parse_mode="HTML")
     db.update_last_message(callback.from_user.id, msg)
 
@@ -550,13 +610,15 @@ async def make_poll(callback: CallbackQuery, callback_data: AddSongCallbackFacto
     user_id = callback.from_user.id
     if user_id in db.admins or db.mode == db.share_mode:
         try:
-            await spotify.add_track_to_queue(spotify.get_full_uri(raw_uri))
+            await spotify.add_track_to_queue(raw_uri)
         except PremiumRequired:
             await handle_premium_required_error(callback)
         except ConnectionError:
             await handle_connection_error(callback)
         else:
+            db.add_song_to_users_queue(user_id, raw_uri)
             msg = await callback.message.edit_text("трек добавлен в очередь 👌", reply_markup=get_menu_keyboard())
+            await update_queue_for_all_users(bot)
             db.update_last_message(user_id, msg)
     elif db.mode == db.poll_mode:
         db.add_song_to_poll(raw_uri)
@@ -635,6 +697,7 @@ async def next_track(callback: CallbackQuery, bot: Bot):
             pass
         await menu(callback)
         await update_menu_for_all_users(bot, callback.from_user.id)
+        await update_queue_for_all_users(bot)
 
 
 @router.callback_query(F.data == 'previous_track')
@@ -657,6 +720,7 @@ async def previous_track(callback: CallbackQuery, bot: Bot):
             pass
         await menu(callback)
         await update_menu_for_all_users(bot, callback.from_user.id)
+        await update_queue_for_all_users(bot)
 
 
 @router.callback_query(F.data == 'confirm_end_session')
@@ -686,6 +750,7 @@ async def end_session(callback: CallbackQuery, bot: Bot):
             pass
     await spotify.close()
     db.clear()
+    scheduler.shutdown()
 
 
 async def del_message(msg: Message):
@@ -768,27 +833,54 @@ async def confirm_leave_session(callback: CallbackQuery):
 
 
 async def update_menu_for_all_users(bot: Bot, *ignore_list):
-    for user_id, message in db.last_message.items():
-        old: str = message.text
-        if old.startswith("🎧"):
-            try:
-                curr = await get_menu_text()
-            except ConnectionError:
-                await handle_connection_error(message, bot)
-                return
-            if user_id not in ignore_list:
-                old_split = old.split('\n\n')
-                old_split = [item[item.find(":") + 2:] for item in old_split]
-                curr_split = curr.split('\n\n')
-                curr_split = [item[item.find(":") + 2:] for item in curr_split]
-                if old_split != curr_split:
-                    if user_id in db.admins:
-                        markup = get_admin_menu_keyboard()
-                    else:
-                        markup = get_user_menu_keyboard()
+    if db.is_active():
+        for user_id, message in db.last_message.items():
+            old: str = message.text
+            if old.startswith("🎧"):
+                try:
+                    curr = await get_menu_text()
+                except ConnectionError:
+                    await handle_connection_error(message, bot)
+                    return
+                if user_id not in ignore_list:
+                    old_split = old.split('\n\n')
+                    old_split = [item[item.find(":") + 2:] for item in old_split]
+                    curr_split = curr.split('\n\n')
+                    curr_split = [item[item.find(":") + 2:] for item in curr_split]
+                    if old_split != curr_split:
+                        if user_id in db.admins:
+                            markup = get_admin_menu_keyboard()
+                        else:
+                            markup = get_user_menu_keyboard()
+                        try:
+                            msg = await bot.edit_message_text(chat_id=user_id, text=curr, message_id=message.message_id,
+                                                              reply_markup=markup)
+                            db.update_last_message(user_id, msg)
+                        except:
+                            pass
+
+
+async def update_queue_for_all_users(bot: Bot):
+    if db.is_active():
+        for user_id, message in db.last_message.items():
+            old: str = message.text
+            if old.startswith('треки в очереди') or old.startswith("в очереди нет треков"):
+                try:
+                    queue = await get_queue_text()
+                except PremiumRequired:
+                    await handle_premium_required_error(message)
+                    return
+                except ConnectionError:
+                    await handle_connection_error(message, bot)
+                    return
+                if queue is None:
+                    new = "в очереди нет треков"
+                else:
+                    new = "треки в очереди:\n\n" + queue
+                if old != new:
                     try:
-                        msg = await bot.edit_message_text(chat_id=user_id, text=curr, message_id=message.message_id,
-                                                          reply_markup=markup)
+                        msg = await bot.edit_message_text(chat_id=user_id, text=new, message_id=message.message_id,
+                                                          reply_markup=get_menu_keyboard())
                         db.update_last_message(user_id, msg)
                     except:
                         pass

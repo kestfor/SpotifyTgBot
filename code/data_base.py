@@ -32,15 +32,19 @@ class DataBase:
         self._last_request = {}
         self._last_message_from_bot = {}
         self._scheduler: AsyncIOScheduler = None
+        self._users_queue = []
         self._scheduler_jobs = {}
-        self._update_func = None
+
+    @property
+    def scheduler(self):
+        return self._scheduler
 
     def is_active(self):
         return self._token is not None
 
-    async def include_update_function(self, function, *args):
-        self._update_func = function
-        await self.update_menu(*args)
+    async def include_update_functions(self, functions: list, args: list[list]):
+        for num, func in enumerate(functions, start=0):
+            self._scheduler.add_job(func, "interval", seconds=self.__FULL_UPDATE_TIMEOUT_SECONDS, args=args[num], replace_existing=True)
 
     def add_scheduler(self, scheduler):
         self._scheduler = scheduler
@@ -117,13 +121,6 @@ class DataBase:
             await self._last_message_from_bot[user_id].delete()
             self._last_message_from_bot.pop(user_id)
 
-    async def update_menu(self, *args):
-        if self._update_func is not None:
-            await self._update_func(*args)
-        if db.is_active():
-            run_date = datetime.datetime.now() + datetime.timedelta(seconds=self.__FULL_UPDATE_TIMEOUT_SECONDS)
-            self._scheduler.add_job(self.update_menu, "date", args=[*args], run_date=run_date)
-
     @property
     def admins(self):
         return self._admins.copy()
@@ -168,6 +165,22 @@ class DataBase:
                 self._scheduler_jobs.pop(uri)
         else:
             raise KeyError("uri is not valid")
+
+    def add_song_to_users_queue(self, user_id, song_id):
+        self._users_queue.append((user_id, song_id))
+
+    def del_song_from_users_queue(self, user_id, song_id):
+        if (user_id, song_id) in self._users_queue:
+            self._users_queue.remove((user_id, song_id))
+
+    @property
+    def user_queue(self):
+        return self._users_queue
+
+    @user_queue.setter
+    def user_queue(self, item):
+        if isinstance(item, list):
+            self._users_queue = item
 
     def get_amount_votes(self, uri: str):
         return self._poll_results[uri]

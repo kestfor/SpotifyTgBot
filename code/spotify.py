@@ -22,6 +22,10 @@ class AsyncSpotify:
             r = asyncspotify.Route("PUT", "me/player/play", device_id=device_id)
             await self.request(r, json={"context_uri": uri})
 
+        async def get_curr_user_queue(self, device_id):
+            r = asyncspotify.Route("GET", 'me/player/queue')
+            return await self.request(r)
+
     class ModifiedClient(asyncspotify.client.Client):
 
         def __init__(self, auth):
@@ -39,6 +43,13 @@ class AsyncSpotify:
 
             if data is not None:
                 return asyncspotify.CurrentlyPlayingContext(self, data)
+
+        async def get_curr_user_queue(self, device=None):
+            data = await self.http.get_curr_user_queue(device_id=get_id(device))
+            tracks = []
+            for track_obj in data['queue']:
+                tracks.append(asyncspotify.SimpleTrack(self, track_obj))
+            return tracks
 
         async def start_playlist(self, uri: str, device=None):
             await self.http.start_playlist(uri=uri, device_id=get_id(device))
@@ -150,11 +161,29 @@ class AsyncSpotify:
 
     async def add_track_to_queue(self, uri):
         try:
+            if self._track_prefix not in uri:
+                uri = self._track_prefix + uri
             await self._session.player_add_to_queue(uri)
         except asyncspotify.Forbidden:
             raise spotify_errors.PremiumRequired
         except:
             raise spotify_errors.ConnectionError
+
+    async def get_curr_user_queue(self) -> list[asyncspotify.SimpleTrack]:
+        try:
+            queue = await self._session.get_curr_user_queue()
+            return queue
+        except asyncspotify.Forbidden:
+            raise spotify_errors.PremiumRequired
+        except:
+            raise spotify_errors.ConnectionError
+
+    async def get_formatted_curr_user_queue(self) -> list[str]:
+        queue = await self.get_curr_user_queue()
+        res = []
+        for item in queue:
+            res.append(item.name + ' - ' + ', '.join([artist.name for artist in item.artists]))
+        return res
 
     async def next_track(self):
         try:
@@ -207,7 +236,7 @@ class AsyncSpotify:
         else:
             self._volume = max(0, self._volume - self._volume_step)
 
-    async def get_devices(self):
+    async def get_devices(self) -> list[asyncspotify.Device]:
         devices = await self._session.get_devices()
         return devices
 
@@ -249,3 +278,14 @@ class AsyncSpotify:
             return await self.__get_info(await self._session.search("track", q=request, limit=10))
         except:
             raise spotify_errors.ConnectionError
+
+async def main():
+    spotify = AsyncSpotify()
+    await spotify.authorize()
+    queue = await spotify.get_curr_user_queue()
+    for item in queue:
+        print(item.name, ', '.join([artist.name for artist in item.artists]))
+    await spotify.close()
+
+if __name__ == '__main__':
+    asyncio.run(main())
