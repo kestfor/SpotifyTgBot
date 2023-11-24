@@ -19,10 +19,8 @@ from states import SetTokenState, SetAmountForPollState
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import qrcode
 
-
 router = Router()
 spotify: AsyncSpotify
-scheduler: AsyncIOScheduler
 
 
 class AddSongCallbackFactory(CallbackData, prefix="fabAddSong"):
@@ -750,7 +748,6 @@ async def end_session(callback: CallbackQuery, bot: Bot):
             pass
     await spotify.close()
     db.clear()
-    scheduler.shutdown()
 
 
 async def del_message(msg: Message):
