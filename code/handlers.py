@@ -1,8 +1,6 @@
 import asyncio
 import os
 import random
-
-import aiogram.exceptions
 from aiogram.dispatcher.router import Router
 from aiogram import F, Bot
 from aiogram.utils.keyboard import InlineKeyboardBuilder, InlineKeyboardButton
@@ -16,7 +14,6 @@ from data_base import db
 from filters import EmptyDataBaseFilter, UrlFilter
 from aiogram.filters import CommandObject
 from states import SetTokenState, SetAmountForPollState
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import qrcode
 
 router = Router()
@@ -831,12 +828,15 @@ async def confirm_leave_session(callback: CallbackQuery):
 
 async def update_menu_for_all_users(bot: Bot, *ignore_list):
     if db.is_active():
+        is_connection_error = False
+        try:
+            curr = await get_menu_text()
+        except ConnectionError:
+            is_connection_error = True
         for user_id, message in db.last_message.items():
             old: str = message.text
             if old.startswith("🎧"):
-                try:
-                    curr = await get_menu_text()
-                except ConnectionError:
+                if is_connection_error:
                     await handle_connection_error(message, bot)
                     return
                 if user_id not in ignore_list:
@@ -859,17 +859,24 @@ async def update_menu_for_all_users(bot: Bot, *ignore_list):
 
 async def update_queue_for_all_users(bot: Bot):
     if db.is_active():
+        is_premium_required = False
+        is_connection_error = False
+        queue = None
+        try:
+            queue = await get_queue_text()
+        except PremiumRequired:
+            is_premium_required = True
+        except ConnectionError:
+            is_connection_error = True
         for user_id, message in db.last_message.items():
+            if is_premium_required:
+                await handle_premium_required_error(message)
+                return
+            if is_connection_error:
+                await handle_connection_error(message, bot)
+                return
             old: str = message.text
             if old.startswith('треки в очереди') or old.startswith("в очереди нет треков"):
-                try:
-                    queue = await get_queue_text()
-                except PremiumRequired:
-                    await handle_premium_required_error(message)
-                    return
-                except ConnectionError:
-                    await handle_connection_error(message, bot)
-                    return
                 if queue is None:
                     new = "в очереди нет треков"
                 else:
