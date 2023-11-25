@@ -153,8 +153,7 @@ def get_admin_menu_keyboard():
 def get_user_menu_keyboard():
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text="⚙️ настройки ⚙️", callback_data="get_settings"))
-    if db.mode == db.share_mode:
-        builder.row(InlineKeyboardButton(text='🎵 добавить трек 🎵', callback_data="add_track"))
+    builder.row(InlineKeyboardButton(text='🎵 добавить трек 🎵', callback_data="add_track"))
     builder.row(InlineKeyboardButton(text='💽 очередь 💽', callback_data="view_queue"))
     if db.mode == db.share_mode:
         builder.row(InlineKeyboardButton(text='🔉', callback_data='decrease_volume'))
