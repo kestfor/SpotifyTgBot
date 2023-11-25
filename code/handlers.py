@@ -44,6 +44,7 @@ class AddAdminFactory(CallbackData, prefix="addAdmin"):
 
 
 def synchronize_queues(spotify_queue):
+    print("before sync: ", *db.user_queue)
     top_track = spotify_queue[0].id
     ids = [item[1] for item in db.user_queue]
     if top_track not in ids:
@@ -51,6 +52,7 @@ def synchronize_queues(spotify_queue):
     else:
         top_track_ind = ids.index(top_track)
         db.user_queue = db.user_queue[top_track_ind:]
+    print("after sync: ", *db.user_queue)
 
 
 async def handle_connection_error(callback: CallbackQuery | Message, bot=None):
