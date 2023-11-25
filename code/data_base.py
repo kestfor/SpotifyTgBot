@@ -11,9 +11,8 @@ from apscheduler.job import Job
 
 class DataBase:
 
-    __POLL_MODE = 0
+    __RESTRICTED_MODE = 0
     __SHARE_MODE = 1
-    __MINUTES_FOR_POLL = 3
     __AMOUNT_TO_ADD_TO_QUEUE = 5
     __FULL_UPDATE_TIMEOUT_SECONDS = 20
 
@@ -28,7 +27,6 @@ class DataBase:
         self._mode = self.__SHARE_MODE
         self._admins = self._load_admins()
         self._users = self._admins.copy()
-        self._poll_results = {}
         self._last_request = {}
         self._last_message_from_bot = {}
         self._scheduler: AsyncIOScheduler = None
@@ -102,8 +100,8 @@ class DataBase:
         return self._users.copy()
 
     @property
-    def poll_mode(self):
-        return self.__POLL_MODE
+    def restricted_mode(self):
+        return self.__RESTRICTED_MODE
 
     @property
     def share_mode(self):
@@ -138,33 +136,10 @@ class DataBase:
 
     @mode.setter
     def mode(self, new_mode: int):
-        if new_mode in [self.__SHARE_MODE, self.__POLL_MODE]:
+        if new_mode in [self.__SHARE_MODE, self.__RESTRICTED_MODE]:
             self._mode = new_mode
         else:
             raise ValueError("wrong mode")
-
-    def add_song_to_poll(self, uri: str):
-        if uri not in self._poll_results:
-            self._poll_results[uri] = 1
-            run_date = datetime.datetime.now() + datetime.timedelta(minutes=self.__MINUTES_FOR_POLL)
-            run_date = run_date.replace(second=0, microsecond=0)
-            job: Job = self._scheduler.add_job(self.del_song_from_poll, "date", args=[uri], run_date=run_date)
-            self._scheduler_jobs[uri] = job.id
-
-    def del_song_from_poll(self, uri: str):
-        if uri in self._poll_results:
-            self._poll_results.pop(uri)
-
-    async def add_vote(self, uri: str, spotify: AsyncSpotify):
-        if uri in self._poll_results:
-            self._poll_results[uri] += 1
-            if self._poll_results[uri] >= self.__AMOUNT_TO_ADD_TO_QUEUE:
-                await spotify.add_track_to_queue(spotify.get_full_uri(uri))
-                self.del_song_from_poll(uri)
-                self._scheduler.remove_job(self._scheduler_jobs[uri])
-                self._scheduler_jobs.pop(uri)
-        else:
-            raise KeyError("uri is not valid")
 
     def add_song_to_users_queue(self, user_id, song_id):
         self._users_queue.append((user_id, song_id))
@@ -181,9 +156,6 @@ class DataBase:
     def user_queue(self, item):
         if isinstance(item, list):
             self._users_queue = item
-
-    def get_amount_votes(self, uri: str):
-        return self._poll_results[uri]
 
     def add_admin(self, user_id, user_name):
         self._admins[user_id] = user_name

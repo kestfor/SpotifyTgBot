@@ -409,7 +409,7 @@ async def handle_not_active_session(callback: CallbackQuery):
 async def change_mode(callback: CallbackQuery):
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text='share ♻️', callback_data="set_share_mode"))
-    builder.row(InlineKeyboardButton(text='poll ✅❎', callback_data='set_poll_mode'))
+    builder.row(InlineKeyboardButton(text='restricted 🔒', callback_data='set_restricted_mode'))
     msg = await callback.message.edit_text(text='выберите режим', reply_markup=builder.as_markup())
     db.update_last_message(callback.from_user.id, msg)
 
@@ -421,13 +421,11 @@ async def set_share_mode(callback: CallbackQuery):
     db.update_last_message(callback.from_user.id, msg)
 
 
-@router.callback_query(F.data == 'set_poll_mode')
-async def set_share_mode(callback: CallbackQuery, state: FSMContext):
-    db.mode = db.poll_mode
-    msg = await callback.message.edit_text(text='введите число голосов, необходимых для добавления в очередь:',
-                                           reply_markup=None)
+@router.callback_query(F.data == 'set_restricted_mode')
+async def set_share_mode(callback: CallbackQuery):
+    db.mode = db.restricted_mode
+    msg = await callback.message.edit_text(text='установлен режим share restricted 🔒', reply_markup=get_menu_keyboard())
     db.update_last_message(callback.from_user.id, msg)
-    await state.set_state(SetAmountForPollState.set_amount)
 
 
 @router.callback_query(F.data == 'get_settings')
@@ -438,22 +436,6 @@ async def get_settings(callback: CallbackQuery):
         db.update_last_message(callback.from_user.id, msg)
     else:
         await handle_not_active_session(callback)
-
-
-@router.message(F.text.len() > 0, SetAmountForPollState.set_amount)
-async def set_amount_for_poll(message: Message, state: FSMContext):
-    amount = message.text
-    await db.del_last_message(message.from_user.id)
-    try:
-        amount = int(amount)
-        db.amount_to_add_to_queue = amount
-    except ValueError:
-        msg = await message.answer("введите неотрицательное число", reply_markup=None)
-    else:
-        await state.clear()
-        msg = await message.answer(text='установлен режим poll ✅❎', reply_markup=get_menu_keyboard())
-    await message.delete()
-    db.update_last_message(message.from_user.id, msg)
 
 
 @router.message(Command("start"))
@@ -611,43 +593,6 @@ async def make_poll(callback: CallbackQuery, callback_data: AddSongCallbackFacto
         msg = await callback.message.edit_text("трек добавлен в очередь 👌", reply_markup=get_menu_keyboard())
         await update_queue_for_all_users(bot)
         db.update_last_message(user_id, msg)
-    # elif db.mode == db.poll_mode:
-    #     db.add_song_to_poll(raw_uri)
-    #     msg = await callback.message.edit_text("трек выставлен на голосование 👌", reply_markup=get_menu_keyboard())
-    #     db.update_last_message(user_id, msg)
-    #     builder = InlineKeyboardBuilder()
-    #     builder.button(text="✅", callback_data=ChangeSongsVote(uri=raw_uri, action="add"))
-    #     builder.button(text="❎", callback_data=ChangeSongsVote(uri=raw_uri, action="ignore"))
-    #     for user in db.users:
-    #         if user != callback.from_user.id:
-    #             msg = await bot.send_message(text=f"добавить в очередь "
-    #                                               f"{db.last_request[callback.from_user.id][raw_uri]}?",
-    #                                          chat_id=user,
-    #                                          reply_markup=builder.as_markup())
-    #             db.update_last_message(user, msg)
-
-
-@router.callback_query(ChangeSongsVote.filter())
-async def check_vote(callback: CallbackQuery, callback_data: ChangeSongsVote):
-    try:
-        amount_votes = db.get_amount_votes(callback_data.uri)
-        if callback_data.action == 'add':
-            amount_votes += 1
-    except KeyError:
-        await callback.message.edit_text("голосование за этот трек уже не актуально 😔", reply_markup=None)
-    else:
-        await callback.message.edit_text(text=f"голос учтен 😉, 'за' проголосовал(о) "
-                                              f"{amount_votes} человек(а)",
-                                         reply_markup=None)
-        if callback_data.action == 'add':
-            try:
-                await db.add_vote(callback_data.uri, spotify)
-            except ConnectionError:
-                pass
-            except PremiumRequired:
-                pass
-    await asyncio.sleep(1)
-    await callback.message.delete()
 
 
 @router.callback_query(F.data == 'start_pause')
