@@ -835,17 +835,16 @@ async def confirm_leave_session(callback: CallbackQuery):
 
 async def update_menu_for_all_users(bot: Bot, *ignore_list):
     if db.is_active():
-        is_connection_error = False
-        try:
-            curr = await get_menu_text()
-        except ConnectionError:
-            is_connection_error = True
+        curr = None
         for user_id, message in db.last_message.items():
             old: str = message.text
             if old.startswith("🎧"):
-                if is_connection_error:
-                    await handle_connection_error(message, bot)
-                    return
+                if curr is None:
+                    try:
+                        curr = await get_menu_text()
+                    except ConnectionError:
+                        await handle_connection_error(message, bot)
+                        return
                 if user_id not in ignore_list:
                     old_split = old.split('\n\n')
                     old_split = [item[item.find(":") + 2:] for item in old_split]
@@ -866,24 +865,19 @@ async def update_menu_for_all_users(bot: Bot, *ignore_list):
 
 async def update_queue_for_all_users(bot: Bot):
     if db.is_active():
-        is_premium_required = False
-        is_connection_error = False
         queue = None
-        try:
-            queue = await get_queue_text()
-        except PremiumRequired:
-            is_premium_required = True
-        except ConnectionError:
-            is_connection_error = True
         for user_id, message in db.last_message.items():
-            if is_premium_required:
-                await handle_premium_required_error(message)
-                return
-            if is_connection_error:
-                await handle_connection_error(message, bot)
-                return
             old: str = message.text
             if old.startswith('треки в очереди') or old.startswith("в очереди нет треков"):
+                if queue is None:
+                    try:
+                        queue = await get_queue_text()
+                    except PremiumRequired:
+                        await handle_connection_error(message, bot)
+                        return
+                    except ConnectionError:
+                        await handle_premium_required_error(message)
+                        return
                 if queue is None:
                     new = "в очереди нет треков"
                 else:
