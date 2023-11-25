@@ -138,9 +138,8 @@ def get_settings_keyboard(user_id):
 def get_admin_menu_keyboard():
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text="⚙️ настройки ⚙️", callback_data="get_settings"))
-    builder.row(InlineKeyboardButton(text='💽 включить плейлист 💽', callback_data='start_playlist'))
     builder.row(InlineKeyboardButton(text='🎵 добавить трек 🎵', callback_data='add_track'))
-    builder.row(InlineKeyboardButton(text='очередь', callback_data="view_queue"))
+    builder.row(InlineKeyboardButton(text='💽 очередь 💽', callback_data="view_queue"))
     builder.row(InlineKeyboardButton(text='🔉', callback_data='decrease_volume'))
     builder.add(InlineKeyboardButton(text='🔇', callback_data='mute_volume'))
     builder.add(InlineKeyboardButton(text='🔊', callback_data="increase_volume"))
@@ -155,9 +154,8 @@ def get_user_menu_keyboard():
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text="⚙️ настройки ⚙️", callback_data="get_settings"))
     if db.mode == db.share_mode:
-        builder.row(InlineKeyboardButton(text='💽 включить плейлист 💽', callback_data='start_playlist'))
-    builder.row(InlineKeyboardButton(text='🎵 добавить трек 🎵', callback_data="add_track"))
-    builder.row(InlineKeyboardButton(text='очередь', callback_data="view_queue"))
+        builder.row(InlineKeyboardButton(text='🎵 добавить трек 🎵', callback_data="add_track"))
+    builder.row(InlineKeyboardButton(text='💽 очередь 💽', callback_data="view_queue"))
     if db.mode == db.share_mode:
         builder.row(InlineKeyboardButton(text='🔉', callback_data='decrease_volume'))
         builder.add(InlineKeyboardButton(text='🔇', callback_data='mute_volume'))
@@ -603,32 +601,31 @@ async def search_track_handler(message: Message):
 async def make_poll(callback: CallbackQuery, callback_data: AddSongCallbackFactory, bot: Bot):
     raw_uri = callback_data.uri
     user_id = callback.from_user.id
-    if user_id in db.admins or db.mode == db.share_mode:
-        try:
-            await spotify.add_track_to_queue(raw_uri)
-        except PremiumRequired:
-            await handle_premium_required_error(callback)
-        except ConnectionError:
-            await handle_connection_error(callback)
-        else:
-            db.add_song_to_users_queue(user_id, raw_uri)
-            msg = await callback.message.edit_text("трек добавлен в очередь 👌", reply_markup=get_menu_keyboard())
-            await update_queue_for_all_users(bot)
-            db.update_last_message(user_id, msg)
-    elif db.mode == db.poll_mode:
-        db.add_song_to_poll(raw_uri)
-        msg = await callback.message.edit_text("трек выставлен на голосование 👌", reply_markup=get_menu_keyboard())
+    try:
+        await spotify.add_track_to_queue(raw_uri)
+    except PremiumRequired:
+        await handle_premium_required_error(callback)
+    except ConnectionError:
+        await handle_connection_error(callback)
+    else:
+        db.add_song_to_users_queue(user_id, raw_uri)
+        msg = await callback.message.edit_text("трек добавлен в очередь 👌", reply_markup=get_menu_keyboard())
+        await update_queue_for_all_users(bot)
         db.update_last_message(user_id, msg)
-        builder = InlineKeyboardBuilder()
-        builder.button(text="✅", callback_data=ChangeSongsVote(uri=raw_uri, action="add"))
-        builder.button(text="❎", callback_data=ChangeSongsVote(uri=raw_uri, action="ignore"))
-        for user in db.users:
-            if user != callback.from_user.id:
-                msg = await bot.send_message(text=f"добавить в очередь "
-                                                  f"{db.last_request[callback.from_user.id][raw_uri]}?",
-                                             chat_id=user,
-                                             reply_markup=builder.as_markup())
-                db.update_last_message(user, msg)
+    # elif db.mode == db.poll_mode:
+    #     db.add_song_to_poll(raw_uri)
+    #     msg = await callback.message.edit_text("трек выставлен на голосование 👌", reply_markup=get_menu_keyboard())
+    #     db.update_last_message(user_id, msg)
+    #     builder = InlineKeyboardBuilder()
+    #     builder.button(text="✅", callback_data=ChangeSongsVote(uri=raw_uri, action="add"))
+    #     builder.button(text="❎", callback_data=ChangeSongsVote(uri=raw_uri, action="ignore"))
+    #     for user in db.users:
+    #         if user != callback.from_user.id:
+    #             msg = await bot.send_message(text=f"добавить в очередь "
+    #                                               f"{db.last_request[callback.from_user.id][raw_uri]}?",
+    #                                          chat_id=user,
+    #                                          reply_markup=builder.as_markup())
+    #             db.update_last_message(user, msg)
 
 
 @router.callback_query(ChangeSongsVote.filter())
