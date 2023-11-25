@@ -43,7 +43,7 @@ class AddAdminFactory(CallbackData, prefix="addAdmin"):
     user_name: str
 
 
-def synchronize_queues(spotify_queue):
+async def synchronize_queues(spotify_queue):
     print("before sync: ", *db.user_queue)
     top_track = spotify_queue[0].id
     ids = [item[1] for item in db.user_queue]
@@ -230,7 +230,7 @@ async def refresh(callback: CallbackQuery):
 async def get_queue_text():
     global spotify
     queue = await spotify.get_curr_user_queue()
-    synchronize_queues(queue)
+    await synchronize_queues(queue)
     queue = queue[0:min(len(db.user_queue), 10)]
     if len(db.user_queue) == 0:
         return None
