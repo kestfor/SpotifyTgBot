@@ -3,4 +3,7 @@ pydantic-settings
 aiogram>=3.0.0b7
 APScheduler~=3.10.4
 asyncspotify~=0.12.1
-qrcode
+qrcode~=7.4.2
+lyricsgenius~=3.0.1
+beautifulsoup4~=4.9.1
+lxml

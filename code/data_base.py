@@ -1,12 +1,9 @@
-import datetime
 import os
 import json
 from config_reader import config
 from utils import generate_token
 from aiogram.types import Message
-from spotify import AsyncSpotify
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.job import Job
 
 
 class DataBase:

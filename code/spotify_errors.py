@@ -13,3 +13,6 @@ class PremiumRequired(SpotifyErrors):
 class ConnectionError(SpotifyErrors):
     pass
 
+
+class AuthorizationError(SpotifyErrors):
+    pass
