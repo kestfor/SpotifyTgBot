@@ -2,10 +2,13 @@ import asyncio
 import time
 
 from asyncspotify.client import get_id
+from asyncspotify.oauth.response import AuthenticationResponse
 from config_reader import config
 import asyncspotify
 import asyncspotify.http
 import spotify_errors
+import lyrics
+
 
 
 class AsyncSpotify:
@@ -29,8 +32,11 @@ class AsyncSpotify:
     class ModifiedClient(asyncspotify.client.Client):
 
         def __init__(self, auth):
-            self.auth = auth(self)
+            self.auth: AsyncSpotify.ModifiedEasyAuthorizationCodeFlow = auth(self)
             self.http: AsyncSpotify.ModifiedHTTP = AsyncSpotify.ModifiedHTTP(self)
+
+        async def authorize(self, url=None):
+            await self.auth.authorize(url)
 
         async def player_add_to_queue(self, uri: str, device=None):
             await self.http.player_add_to_queue(uri, device_id=get_id(device))
@@ -54,6 +60,51 @@ class AsyncSpotify:
         async def start_playlist(self, uri: str, device=None):
             await self.http.start_playlist(uri=uri, device_id=get_id(device))
 
+    class ModifiedEasyAuthorizationCodeFlow(asyncspotify.EasyAuthorizationCodeFlow):
+
+        def __init__(self, client_id, client_secret, scope, storage):
+            super().__init__(client_id=client_id, client_secret=client_secret, scope=scope, storage=storage)
+
+        async def authorize(self, url=None):
+            '''Authorize the client. Reads from the file specificed by `store`.'''
+
+            data = await self.load()
+
+            # no data found, run first time setup
+            # get response class, pass it to .store
+            if data is None:
+                if url is None:
+                    raise spotify_errors.AuthorizationError
+                data = await self.setup(url)
+
+                if isinstance(data, AuthenticationResponse):
+                    await self.store(data)
+
+            if not isinstance(data, AuthenticationResponse):
+                raise TypeError('setup() has to return an AuthenticationResponse')
+
+            self._data = data
+
+            # refresh it now if it's expired
+            if self._data.is_expired():
+                await self.refresh(start_task=True)
+            else:
+                # manually start refresh task if we didn't refresh on startup
+                self.refresh_in(self._data.seconds_until_expire())
+
+        def access_token(self):
+            return self._data.access_token
+
+        async def setup(self, url):
+
+            code_url = url
+
+            code = self.get_code_from_redirect(code_url)
+            d = self.create_token_data_from_code(code)
+
+            data = await self._token(d)
+            return self.response_class(data)
+
     _track_prefix = 'spotify%3Atrack%3A'
     _album_prefix = 'spotify:album:'
     _playlist_prefix = 'spotify:playlist:'
@@ -68,13 +119,16 @@ class AsyncSpotify:
         self._redirect_uri = config.spotify_redirect_uri.get_secret_value()
         self._scope = asyncspotify.Scope(user_modify_playback_state=True, user_read_playback_state=True)
         self._token_file = config.token_file.get_secret_value()
+        self._lyrics_finder = lyrics.LyricsFinder()
+        self._last_song_lyrics: lyrics.Lyrics = None
 
-        self._auth = asyncspotify.EasyAuthorizationCodeFlow(
+        self._auth = AsyncSpotify.ModifiedEasyAuthorizationCodeFlow(
             client_id=self._client_id,
             client_secret=self._client_secret,
             scope=self._scope,
-            storage=self._token_file
+            storage=self._token_file,
         )
+        self._auth.redirect_uri = self._redirect_uri
 
         self._session = AsyncSpotify.ModifiedClient(self._auth)
         self._volume = 50
@@ -82,17 +136,24 @@ class AsyncSpotify:
         self._playing: bool = False
         self._cached_currently_playing: asyncspotify.CurrentlyPlaying = None
         self._last_update_time = 0
+        self._authorized = False
 
-    async def authorize(self):
-        await self._session.authorize()
+    async def create_authorize_route(self) -> str:
+        return self._session.auth.create_authorize_route()
+
+    async def authorize(self, url=None):
+        if not self._authorized:
+            await self._session.authorize(url)
         try:
             player = await self._session.get_player()
             device = player.device
             self._playing = player.is_playing
             self._volume = device.volume_percent
             self._saved_volume = self._volume
+            self._authorized = True
         except asyncspotify.exceptions.NotFound:
             raise spotify_errors.ConnectionError("there is no active device")
+
 
     async def is_active(self):
         try:
@@ -119,6 +180,7 @@ class AsyncSpotify:
 
     async def close(self):
         await self._session.close()
+        self._authorized = False
 
     async def force_update(self):
         try:
@@ -158,6 +220,25 @@ class AsyncSpotify:
             return [artists, name]
         except:
             raise spotify_errors.ConnectionError
+
+    async def get_lyrics(self, func_waiter=None, **func_waiter_kwargs):
+        artists, name = await self.get_curr_track()
+        main_author = artists[0]
+        name = name[:name.find('(')] if '(' in name else name
+        if self._last_song_lyrics:
+            cached_artist, cached_song = self._last_song_lyrics.artist.lower(), self._last_song_lyrics.name.lower()
+            if main_author.lower() == cached_artist and cached_song == name.lower():
+                return self._last_song_lyrics
+            else:
+                if func_waiter is not None:
+                    await func_waiter(**func_waiter_kwargs)
+                self._last_song_lyrics = self._lyrics_finder.find(main_author, name)
+                return self._last_song_lyrics
+        else:
+            if func_waiter is not None:
+                await func_waiter(**func_waiter_kwargs)
+            self._last_song_lyrics = self._lyrics_finder.find(main_author, name)
+            return self._last_song_lyrics
 
     async def add_track_to_queue(self, uri):
         try:
@@ -278,14 +359,3 @@ class AsyncSpotify:
             return await self.__get_info(await self._session.search("track", q=request, limit=10))
         except:
             raise spotify_errors.ConnectionError
-
-async def main():
-    spotify = AsyncSpotify()
-    await spotify.authorize()
-    queue = await spotify.get_curr_user_queue()
-    for item in queue:
-        print(item.name, ', '.join([artist.name for artist in item.artists]))
-    await spotify.close()
-
-if __name__ == '__main__':
-    asyncio.run(main())

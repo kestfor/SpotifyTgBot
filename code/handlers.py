@@ -8,12 +8,12 @@ from aiogram.filters.command import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery, FSInputFile
 from aiogram.filters.callback_data import CallbackData
-from spotify_errors import PremiumRequired, ConnectionError
+from spotify_errors import PremiumRequired, ConnectionError, AuthorizationError
 from spotify import AsyncSpotify
 from data_base import db
 from filters import EmptyDataBaseFilter, UrlFilter
 from aiogram.filters import CommandObject
-from states import SetTokenState, SetAmountForPollState
+from states import SetTokenState, SetSpotifyUrl, AvailableUrl
 import qrcode
 
 router = Router()
@@ -41,6 +41,12 @@ class ChangeDeviceFactory(CallbackData, prefix="fabDevice"):
 class AddAdminFactory(CallbackData, prefix="addAdmin"):
     user_id: int
     user_name: str
+
+
+class GetNextLyrics(CallbackData, prefix="fabLyrics"):
+    start_ind: int
+    step: int
+    action: str
 
 
 async def synchronize_queues(spotify_queue):
@@ -140,6 +146,7 @@ def get_admin_menu_keyboard():
     builder.row(InlineKeyboardButton(text="⚙️ настройки ⚙️", callback_data="get_settings"))
     builder.row(InlineKeyboardButton(text='🎵 добавить трек 🎵', callback_data='add_track'))
     builder.row(InlineKeyboardButton(text='💽 очередь 💽', callback_data="view_queue"))
+    builder.row(InlineKeyboardButton(text='📖 текст песни 📖', callback_data="view_lyrics"))
     builder.row(InlineKeyboardButton(text='🔉', callback_data='decrease_volume'))
     builder.add(InlineKeyboardButton(text='🔇', callback_data='mute_volume'))
     builder.add(InlineKeyboardButton(text='🔊', callback_data="increase_volume"))
@@ -155,6 +162,7 @@ def get_user_menu_keyboard():
     builder.row(InlineKeyboardButton(text="⚙️ настройки ⚙️", callback_data="get_settings"))
     builder.row(InlineKeyboardButton(text='🎵 добавить трек 🎵', callback_data="add_track"))
     builder.row(InlineKeyboardButton(text='💽 очередь 💽', callback_data="view_queue"))
+    builder.row(InlineKeyboardButton(text='📖 текст песни 📖', callback_data="view_lyrics"))
     if db.mode == db.share_mode:
         builder.row(InlineKeyboardButton(text='🔉', callback_data='decrease_volume'))
         builder.add(InlineKeyboardButton(text='🔇', callback_data='mute_volume'))
@@ -254,11 +262,6 @@ async def view_queue(callback: CallbackQuery):
         await handle_not_active_session(callback)
 
 
-@router.callback_query(ViewQueueFactory.filter())
-async def queue_action(callback: CallbackQuery, callback_data: ViewQueueFactory):
-    pass
-
-
 @router.callback_query(F.data == 'view_url')
 async def view_url(callback: CallbackQuery):
     if db.is_active():
@@ -269,6 +272,53 @@ async def view_url(callback: CallbackQuery):
         db.update_last_message(message=msg, user_id=callback.from_user.id)
     else:
         await handle_not_active_session(callback)
+
+
+def get_lyrics_switcher(start, end, step):
+    builder = InlineKeyboardBuilder()
+    if start != 0:
+        builder.row(InlineKeyboardButton(text='◀️', callback_data=GetNextLyrics(start_ind=start - step, step=20,
+                                                                                action='decrement').pack()))
+    if end != -1:
+        builder.add(InlineKeyboardButton(text='▶️', callback_data=GetNextLyrics(start_ind=start + step, step=20,
+                                                                                action='increment').pack()))
+    builder.row(InlineKeyboardButton(text='меню', callback_data="menu"))
+    return builder.as_markup()
+
+
+@router.callback_query(F.data == 'view_lyrics')
+async def view_lyrics(callback: CallbackQuery):
+    if db.is_active():
+        try:
+            lyrics = await spotify.get_lyrics(callback.message.edit_text,
+                                              text="ищу текст песни\nподождите чуток\nтекст сейчас появится 😉",
+                                              reply_markup=get_menu_keyboard())
+        except ValueError:
+            await callback.message.edit_text("не удалось найти текст", reply_markup=get_menu_keyboard())
+        else:
+            await callback.message.edit_text('\n'.join(lyrics.list_lyrics[0:20]),
+                                             reply_markup=get_lyrics_switcher(0, 20, 20))
+    else:
+        await handle_not_active_session(callback)
+
+
+@router.callback_query(GetNextLyrics.filter(F.action == 'increment'))
+async def next_part_lyrics(callback: CallbackQuery, callback_data: GetNextLyrics):
+    lyrics = await spotify.get_lyrics()
+    start_ind = callback_data.start_ind
+    end_ind = min(start_ind + callback_data.step, len(lyrics.list_lyrics))
+    end_ind_conv = end_ind if end_ind != len(lyrics.list_lyrics) else -1
+    await callback.message.edit_text(text='\n'.join(lyrics.list_lyrics[start_ind:end_ind]),
+                                     reply_markup=get_lyrics_switcher(start_ind, end_ind_conv, end_ind - start_ind))
+
+
+@router.callback_query(GetNextLyrics.filter(F.action == 'decrement'))
+async def previous_part_lyrics(callback: CallbackQuery, callback_data: GetNextLyrics):
+    lyrics = await spotify.get_lyrics()
+    start_ind = max(callback_data.start_ind, 0)
+    end_ind = callback_data.step + start_ind
+    await callback.message.edit_text(text='\n'.join(lyrics.list_lyrics[start_ind:end_ind]),
+                                     reply_markup=get_lyrics_switcher(start_ind, end_ind, callback_data.step))
 
 
 @router.callback_query(F.data == 'view_admins_to_add')
@@ -344,6 +394,14 @@ async def start_playlist_callback(callback: CallbackQuery):
 
 
 @router.message(UrlFilter())
+async def chose_url_role(message: Message, state: FSMContext, bot: Bot):
+    st = await state.get_state()
+    if st == SetSpotifyUrl.set_url:
+        await set_spotify_url(message, state, bot)
+    else:
+        await start_playlist(message)
+
+
 async def start_playlist(message: Message):
     await db.del_last_message(message.from_user.id)
     try:
@@ -459,12 +517,40 @@ async def start_by_command(message: Message, command: CommandObject, bot: Bot):
     await message.delete()
 
 
+async def set_spotify_url(message: Message, state: FSMContext, bot: Bot):
+    url = message.text
+    await db.del_last_message(message.from_user.id)
+    try:
+        await spotify.authorize(url)
+    except:
+        await message.delete()
+        msg = await message.answer("отправлена неверная ссылка")
+        db.update_last_message(message.from_user.id, msg)
+        return
+    else:
+        await state.clear()
+        await message.delete()
+        db.set_token()
+        await db.include_update_functions([update_queue_for_all_users, update_menu_for_all_users], [[bot], [bot]])
+        msg = await message.answer(text=f"авторизация прошла успешно, сессия запущена 🔥\n"
+                                        f"token: <code>{db.token}</code>", reply_markup=get_menu_keyboard(),
+                                   parse_mode="HTML")
+        db.update_last_message(message.from_user.id, msg)
+
+
 @router.callback_query(F.data == 'start_session')
-async def start_session(callback: CallbackQuery, bot: Bot):
+async def start_session(callback: CallbackQuery, bot: Bot, state: FSMContext):
     try:
         global spotify
         spotify = AsyncSpotify()
         await spotify.authorize()
+    except AuthorizationError:
+        msg = await callback.message.edit_text(f"Необходима инициализация\n"
+                                               f"Перейдите по ссылке: {await spotify.create_authorize_route()}\n"
+                                               f"Отправьте ссылку, на которую вы были перенаправлены")
+        db.update_last_message(callback.from_user.id, msg)
+        await state.set_state(SetSpotifyUrl.set_url)
+        return
     except:
         text = ('не удалось обнаружить активное устройство spotify 😞\n\n'
                 'для обнаружения устройства:\n\n'
@@ -823,3 +909,7 @@ async def update_queue_for_all_users(bot: Bot):
                         db.update_last_message(user_id, msg)
                     except:
                         pass
+
+
+if __name__ == '__main__':
+    print(GetNextLyrics(start_ind=10, step=10, action='decrement').pack())

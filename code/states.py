@@ -7,3 +7,11 @@ class SetTokenState(StatesGroup):
 
 class SetAmountForPollState(StatesGroup):
     set_amount = State()
+
+
+class SetSpotifyUrl(StatesGroup):
+    set_url = State()
+
+
+class AvailableUrl(StatesGroup):
+    available = State()
