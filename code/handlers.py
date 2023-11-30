@@ -289,14 +289,14 @@ def get_lyrics_switcher(start, end, step):
 @router.callback_query(F.data == 'view_lyrics')
 async def view_lyrics(callback: CallbackQuery):
     if db.is_active():
-        try:
-            lyrics = await spotify.get_lyrics(callback.message.edit_text,
+        # try:
+        lyrics = await spotify.get_lyrics(callback.message.edit_text,
                                               text="ищу текст песни\nподождите чуток\nтекст сейчас появится 😉",
                                               reply_markup=get_menu_keyboard())
-        except ValueError:
-            await callback.message.edit_text("не удалось найти текст", reply_markup=get_menu_keyboard())
-        else:
-            await callback.message.edit_text('\n'.join(lyrics.list_lyrics[0:20]),
+        # except ValueError:
+        #     await callback.message.edit_text("не удалось найти текст", reply_markup=get_menu_keyboard())
+        # else:
+        await callback.message.edit_text('\n'.join(lyrics.list_lyrics[0:20]),
                                              reply_markup=get_lyrics_switcher(0, 20, 20))
     else:
         await handle_not_active_session(callback)
@@ -909,7 +909,3 @@ async def update_queue_for_all_users(bot: Bot):
                         db.update_last_message(user_id, msg)
                     except:
                         pass
-
-
-if __name__ == '__main__':
-    print(GetNextLyrics(start_ind=10, step=10, action='decrement').pack())
