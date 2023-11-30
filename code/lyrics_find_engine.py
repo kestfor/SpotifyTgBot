@@ -157,10 +157,14 @@ class Genius(lyricsgenius.Genius):
                      for hit in section['hits']
                      if hit['type'] == type_])
 
+        best_match = None
         for hit in hits:
             item = hit['result']
             if clean_str(search_term) in clean_str(item[result_type]):
-                return item
+                if best_match is None or len(clean_str(item[result_type])) < len(best_match[result_type]):
+                    best_match = item
+        if best_match is not None:
+            return best_match
 
         # If the desired type is song lyrics and none of the results matched,
         # return the first result that has lyrics

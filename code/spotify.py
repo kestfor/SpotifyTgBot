@@ -225,6 +225,7 @@ class AsyncSpotify:
         artists, name = await self.get_curr_track()
         main_author = artists[0]
         name = name[:name.find('(')] if '(' in name else name
+        name = name.strip()
         if self._last_song_lyrics:
             cached_artist, cached_song = self._last_song_lyrics.artist.lower(), self._last_song_lyrics.name.lower()
             if main_author.lower() == cached_artist and cached_song == name.lower():

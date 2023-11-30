@@ -53,3 +53,8 @@ class LyricsFinder:
             lyrics = raw_lyrics[raw_lyrics.find("\n") + 1:last_non_digit + 1]
             return Lyrics(name, artist, lyrics)
 
+
+if __name__ == '__main__':
+    l = LyricsFinder()
+    song = l.find("annihilate", "metro boomin")
+    print(song.lyrics)
