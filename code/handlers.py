@@ -8,7 +8,9 @@ from aiogram.filters.command import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery, FSInputFile
 from aiogram.filters.callback_data import CallbackData
-from spotify_errors import PremiumRequired, ConnectionError, AuthorizationError
+from asyncspotify import BadRequest
+
+from spotify_errors import PremiumRequired, ConnectionError, AuthorizationError, Forbidden
 from spotify import AsyncSpotify
 from data_base import db
 from filters import EmptyDataBaseFilter, UrlFilter
@@ -833,6 +835,8 @@ async def mute_volume(callback: CallbackQuery, bot: Bot):
         await handle_premium_required_error(callback)
         return
     except ConnectionError:
+        pass
+    except Forbidden:
         pass
     await menu(callback)
     await update_menu_for_all_users(bot, callback.from_user.id)

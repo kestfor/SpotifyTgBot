@@ -341,7 +341,7 @@ class AsyncSpotify:
             await self._session.player_volume(self._volume)
         except asyncspotify.Forbidden:
             self._volume, self._saved_volume = old_values
-            raise spotify_errors.PremiumRequired
+            raise spotify_errors.Forbidden
 
     @property
     def volume(self):
