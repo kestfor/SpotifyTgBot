@@ -233,12 +233,12 @@ class AsyncSpotify:
             else:
                 if func_waiter is not None:
                     await func_waiter(**func_waiter_kwargs)
-                self._last_song_lyrics = self._lyrics_finder.find(main_author, name)
+                self._last_song_lyrics = await self._lyrics_finder.find(main_author, name)
                 return self._last_song_lyrics
         else:
             if func_waiter is not None:
                 await func_waiter(**func_waiter_kwargs)
-            self._last_song_lyrics = self._lyrics_finder.find(main_author, name)
+            self._last_song_lyrics = await self._lyrics_finder.find(main_author, name)
             return self._last_song_lyrics
 
     async def add_track_to_queue(self, uri):
@@ -303,10 +303,9 @@ class AsyncSpotify:
 
     async def increase_volume(self):
         try:
-
             await self._session.player_volume(min(100, self._volume + self._volume_step))
         except asyncspotify.Forbidden:
-            raise spotify_errors.PremiumRequired
+            pass
         else:
             self._volume = min(100, self._volume + self._volume_step)
 
@@ -314,7 +313,7 @@ class AsyncSpotify:
         try:
             await self._session.player_volume(max(0, self._volume - self._volume_step))
         except asyncspotify.Forbidden:
-            raise spotify_errors.PremiumRequired
+            pass
         else:
             self._volume = max(0, self._volume - self._volume_step)
 
@@ -330,7 +329,7 @@ class AsyncSpotify:
         except:
             raise ConnectionError
 
-    async def mute_unmute(self):
+    async def mute_unmute(self): 
         old_values = [self._volume, self._saved_volume]
         try:
             if self._volume == 0:
